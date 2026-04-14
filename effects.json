@@ -1,0 +1,144 @@
+{
+  "bouncing_balls": {
+    "duration": 10,
+    "freq": 5,
+    "brightness": 0.42,
+    "enabled": true,
+    "rainbow": true,
+    "color": "#00a3f5",
+    "rarity": 3
+  },
+  "c64_loadscreen": {
+    "duration": 10,
+    "freq": 5,
+    "brightness": 1,
+    "enabled": true,
+    "rainbow": true,
+    "color": "#ff8800",
+    "rarity": 3
+  },
+  "fading_pixel": {
+    "duration": 10,
+    "freq": 5,
+    "brightness": 1,
+    "enabled": true,
+    "rainbow": true,
+    "color": "#ffffff",
+    "rarity": 3
+  },
+  "fete_trouble": {
+    "duration": 10,
+    "freq": 1,
+    "brightness": 1,
+    "enabled": true,
+    "rainbow": true,
+    "color": "#c36a04",
+    "rarity": 3
+  },
+  "fillscreen_snakewise": {
+    "duration": 10,
+    "freq": 1,
+    "brightness": 1,
+    "enabled": false,
+    "rarity": 3
+  },
+  "moving_tile_puzzle": {
+    "duration": 10,
+    "freq": 1,
+    "brightness": 1,
+    "enabled": false,
+    "rarity": 3
+  },
+  "nools": {
+    "duration": 10,
+    "freq": 1,
+    "brightness": 1,
+    "enabled": false,
+    "rainbow": true,
+    "color": "#6a2929",
+    "rarity": 3
+  },
+  "pumping_circle": {
+    "duration": 10,
+    "freq": 2,
+    "brightness": 1,
+    "enabled": false,
+    "rainbow": true,
+    "color": "#ff0080",
+    "rarity": 3
+  },
+  "scroll_text": {
+    "duration": 10,
+    "freq": 2,
+    "brightness": 1,
+    "enabled": true,
+    "rarity": 3
+  },
+  "simple_color_scroll": {
+    "duration": 10,
+    "freq": 2,
+    "brightness": 1,
+    "enabled": false,
+    "rainbow": true,
+    "color": "#00ff80",
+    "rarity": 3
+  },
+  "simple_firework": {
+    "duration": 10,
+    "freq": 4,
+    "brightness": 1,
+    "enabled": false,
+    "rainbow": true,
+    "color": "#ff4400",
+    "rarity": 3
+  },
+  "simple_snake": {
+    "duration": 10,
+    "freq": 2,
+    "brightness": 1,
+    "enabled": false,
+    "rainbow": true,
+    "color": "#00ffff",
+    "rarity": 3
+  },
+  "static_text": {
+    "duration": 10,
+    "freq": 2,
+    "brightness": 1,
+    "enabled": true,
+    "rarity": 3
+  },
+  "fire": {
+    "duration": 120,
+    "freq": 6,
+    "brightness": 1,
+    "enabled": false,
+    "rarity": 3
+  },
+  "rain": {
+    "duration": 10,
+    "freq": 2,
+    "brightness": 1,
+    "enabled": false,
+    "rainbow": true,
+    "color": "#00ccff",
+    "rarity": 3
+  },
+  "starfield": {
+    "duration": 10,
+    "freq": 3,
+    "brightness": 1,
+    "enabled": false,
+    "rainbow": true,
+    "color": "#ffffff",
+    "rarity": 3
+  },
+  "raindrops": {
+    "duration": 12,
+    "freq": 2,
+    "brightness": 1,
+    "enabled": false,
+    "rainbow": true,
+    "color": "#00aaff"
+  }
+}

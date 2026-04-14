@@ -1,0 +1,27 @@
+{
+  "scrollPool": [
+    {
+      "text": "NOOLS dddddddddddddNOOLS dddddddddddddNFINNN",
+      "color": "#ffffff",
+      "rainbow": false
+    },
+    {
+      "text": "fdxfdxccccc",
+      "color": "#ff0000",
+      "rainbow": false
+    },
+    {
+      "text": "aaaa",
+      "color": "#088aaa",
+      "rainbow": false
+    }
+  ],
+  "staticPool": [
+    {
+      "text": "NOOLS",
+      "color": "#ff8800",
+      "rainbow": false
+    }
+  ],
+  "djName": ""
+}
