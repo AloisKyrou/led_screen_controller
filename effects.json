@@ -1,36 +1,36 @@
 {
   "bouncing_balls": {
     "duration": 10,
-    "freq": 5,
+    "freq": 3,
     "brightness": 0.42,
-    "enabled": true,
+    "enabled": false,
     "rainbow": true,
     "color": "#00a3f5",
     "rarity": 3
   },
   "c64_loadscreen": {
     "duration": 10,
-    "freq": 5,
+    "freq": 3,
     "brightness": 1,
-    "enabled": true,
+    "enabled": false,
     "rainbow": true,
     "color": "#ff8800",
     "rarity": 3
   },
   "fading_pixel": {
-    "duration": 10,
-    "freq": 5,
+    "duration": 23,
+    "freq": 6,
     "brightness": 1,
     "enabled": true,
     "rainbow": true,
-    "color": "#ffffff",
+    "color": "#eb0000",
     "rarity": 3
   },
   "fete_trouble": {
     "duration": 10,
-    "freq": 1,
+    "freq": 6,
     "brightness": 1,
-    "enabled": true,
+    "enabled": false,
     "rainbow": true,
     "color": "#c36a04",
     "rarity": 3
@@ -51,7 +51,7 @@
   },
   "nools": {
     "duration": 10,
-    "freq": 1,
+    "freq": 6,
     "brightness": 1,
     "enabled": false,
     "rainbow": true,
@@ -68,16 +68,16 @@
     "rarity": 3
   },
   "scroll_text": {
-    "duration": 10,
-    "freq": 2,
+    "duration": 27,
+    "freq": 4,
     "brightness": 1,
     "enabled": true,
     "rarity": 3
   },
   "simple_color_scroll": {
     "duration": 10,
-    "freq": 2,
-    "brightness": 1,
+    "freq": 1,
+    "brightness": 0.33,
     "enabled": false,
     "rainbow": true,
     "color": "#00ff80",
@@ -85,19 +85,19 @@
   },
   "simple_firework": {
     "duration": 10,
-    "freq": 4,
+    "freq": 1,
     "brightness": 1,
     "enabled": false,
-    "rainbow": true,
+    "rainbow": false,
     "color": "#ff4400",
     "rarity": 3
   },
   "simple_snake": {
-    "duration": 10,
-    "freq": 2,
+    "duration": 60,
+    "freq": 1,
     "brightness": 1,
     "enabled": false,
-    "rainbow": true,
+    "rainbow": false,
     "color": "#00ffff",
     "rarity": 3
   },
@@ -109,8 +109,8 @@
     "rarity": 3
   },
   "fire": {
-    "duration": 120,
-    "freq": 6,
+    "duration": 13,
+    "freq": 3,
     "brightness": 1,
     "enabled": false,
     "rarity": 3
@@ -126,7 +126,7 @@
   },
   "starfield": {
     "duration": 10,
-    "freq": 3,
+    "freq": 1,
     "brightness": 1,
     "enabled": false,
     "rainbow": true,
@@ -135,10 +135,16 @@
   },
   "raindrops": {
     "duration": 12,
-    "freq": 2,
+    "freq": 1,
     "brightness": 1,
     "enabled": false,
     "rainbow": true,
     "color": "#00aaff"
+  },
+  "media": {
+    "duration": 40,
+    "freq": 1,
+    "brightness": 1,
+    "enabled": true
   }
 }

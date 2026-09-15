@@ -212,82 +212,97 @@ function buildCenteredMask(text, W, H) {
   return mask;
 }
 
-module.exports = { buildTape, buildCenteredMask, buildAutoMask, hsvToRgb, hexToRgb, CHAR_H, CHAR_W, GLYPHS };
-
 /**
- * Auto-scaling centered mask:
- *   1. Single line at natural scale (floor(H/CHAR_H)) if it fits
- *   2. Single line at scale=1 if it fits
- *   3. Two lines at scale=1, split at nearest space to midpoint
+ * Build one or more centered masks without clipping horizontal glyphs.
+ * Long text is word-wrapped over two lines and paginated when necessary.
  */
-function buildAutoMask(text, W, H) {
-  const chars = [...(text || ' ')].map(glyph);
+function buildAutoMasks(text, W, H) {
+  const normalized = String(text || ' ').replace(/\s+/g, ' ').trim() || ' ';
+  const safeWidth = Math.max(1, W - 2); // one clear pixel at both physical edges
 
-  // Try natural scale
-  const scale = Math.max(1, Math.floor(H / CHAR_H));
-  const twS   = chars.length * (CHAR_W * scale) + Math.max(0, chars.length - 1) * (CHAR_SPACING * scale);
-  if (twS <= W) return buildCenteredMask(text, W, H);
+  function widthFor(value, scale, spacing) {
+    const length = [...value].length;
+    return length * CHAR_W * scale + Math.max(0, length - 1) * spacing;
+  }
 
-  // Try scale=1 single line
-  const tw1 = chars.length * CHAR_W + Math.max(0, chars.length - 1) * CHAR_SPACING;
-  if (tw1 <= W) {
-    const startX = Math.floor((W - tw1) / 2);
-    const startY = Math.floor((H - CHAR_H) / 2);
+  function renderPage(lines, scale, spacing) {
+    const lineHeight = CHAR_H * scale;
+    const lineGap = lines.length > 1 ? Math.max(1, H - lineHeight * lines.length) : 0;
+    const totalHeight = lineHeight * lines.length + lineGap * Math.max(0, lines.length - 1);
+    const startY = Math.floor((H - totalHeight) / 2);
     const mask = new Uint8Array(H * W);
-    let x = startX;
-    for (const cols of chars) {
-      for (let cx = 0; cx < CHAR_W; cx++) {
-        const col = cols[cx];
-        for (let cy = 0; cy < CHAR_H; cy++) {
-          if ((col >> cy) & 1) {
-            const px = x + cx; const py = startY + cy;
-            if (px >= 0 && px < W && py >= 0 && py < H) mask[py * W + px] = 1;
+
+    lines.forEach((line, lineIndex) => {
+      const chars = [...(line || ' ')].map(glyph);
+      const lineWidth = widthFor(line, scale, spacing);
+      let x = Math.floor((W - lineWidth) / 2);
+      const y = startY + lineIndex * (lineHeight + lineGap);
+      for (const cols of chars) {
+        for (let cx = 0; cx < CHAR_W; cx++) {
+          const col = cols[cx];
+          for (let cy = 0; cy < CHAR_H; cy++) {
+            if (!((col >> cy) & 1)) continue;
+            for (let sy = 0; sy < scale; sy++) {
+              for (let sx = 0; sx < scale; sx++) {
+                const px = x + cx * scale + sx;
+                const py = y + cy * scale + sy;
+                if (px >= 0 && px < W && py >= 0 && py < H) mask[py * W + px] = 1;
+              }
+            }
           }
         }
+        x += CHAR_W * scale + spacing;
       }
-      x += CHAR_W + CHAR_SPACING;
-    }
+    });
     return mask;
   }
 
-  // Two lines at scale=1 — find split nearest to midpoint
-  const mid = Math.floor(text.length / 2);
-  let splitIdx = -1;
-  for (let d = 0; d <= mid; d++) {
-    if (text[mid + d] === ' ') { splitIdx = mid + d; break; }
-    if (d > 0 && text[mid - d] === ' ') { splitIdx = mid - d; break; }
+  const naturalScale = Math.max(1, Math.floor(H / CHAR_H));
+  const naturalSpacing = CHAR_SPACING * naturalScale;
+  if (widthFor(normalized, naturalScale, naturalSpacing) <= safeWidth) {
+    return [renderPage([normalized], naturalScale, naturalSpacing)];
   }
-  let line1, line2;
-  if (splitIdx >= 0) {
-    line1 = text.slice(0, splitIdx).trim();
-    line2 = text.slice(splitIdx + 1).trim();
-  } else {
-    line1 = text.slice(0, mid); line2 = text.slice(mid);
+  if (widthFor(normalized, 1, CHAR_SPACING) <= safeWidth) {
+    return [renderPage([normalized], 1, CHAR_SPACING)];
+  }
+  if (widthFor(normalized, 1, 0) <= safeWidth) {
+    return [renderPage([normalized], 1, 0)];
   }
 
-  const gap    = 1;
-  const totalH = CHAR_H * 2 + gap;
-  const y0     = Math.floor((H - totalH) / 2);
-  const mask   = new Uint8Array(H * W);
+  // Two 7-pixel rows exactly fit the 15-pixel panel. Compact spacing leaves
+  // room for eleven characters per line plus a physical edge margin.
+  const spacing = 0;
+  const maxChars = Math.max(1, Math.floor(safeWidth / CHAR_W));
+  const lines = [];
+  let current = '';
 
-  function renderLine(line, lineY) {
-    const lc = [...(line || ' ')].map(glyph);
-    const lw = lc.length * CHAR_W + Math.max(0, lc.length - 1) * CHAR_SPACING;
-    let x = Math.floor((W - lw) / 2);
-    for (const cols of lc) {
-      for (let cx = 0; cx < CHAR_W; cx++) {
-        const col = cols[cx];
-        for (let cy = 0; cy < CHAR_H; cy++) {
-          if ((col >> cy) & 1) {
-            const px = x + cx; const py = lineY + cy;
-            if (px >= 0 && px < W && py >= 0 && py < H) mask[py * W + px] = 1;
-          }
-        }
-      }
-      x += CHAR_W + CHAR_SPACING;
+  for (const wordValue of normalized.split(' ')) {
+    const word = [...wordValue];
+    while (word.length > maxChars) {
+      if (current) { lines.push(current); current = ''; }
+      lines.push(word.splice(0, maxChars).join(''));
+    }
+    const value = word.join('');
+    if (!value) continue;
+    const candidate = current ? `${current} ${value}` : value;
+    if ([...candidate].length <= maxChars) current = candidate;
+    else {
+      if (current) lines.push(current);
+      current = value;
     }
   }
-  renderLine(line1, y0);
-  renderLine(line2, y0 + CHAR_H + gap);
-  return mask;
+  if (current) lines.push(current);
+  if (!lines.length) lines.push(' ');
+
+  const pages = [];
+  for (let i = 0; i < lines.length; i += 2) {
+    pages.push(renderPage(lines.slice(i, i + 2), 1, spacing));
+  }
+  return pages;
 }
+
+function buildAutoMask(text, W, H) {
+  return buildAutoMasks(text, W, H)[0];
+}
+
+module.exports = { buildTape, buildCenteredMask, buildAutoMask, buildAutoMasks, hsvToRgb, hexToRgb, CHAR_H, CHAR_W, GLYPHS };

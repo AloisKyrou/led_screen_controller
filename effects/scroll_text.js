@@ -7,14 +7,20 @@ const name = 'scroll_text';
 
 const SCROLL_SPEED = 30; // pixels per second
 
-function init(W, H, config, shared) {
+function init(W, H, config, shared, options) {
   const pool = (shared && shared.scrollPool) || [];
-  const entry = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+  const publicQueue = (shared && shared.publicQueue) || [];
+  const selectedEntry = options && options.entry;
+  const queuedEntry = !selectedEntry && publicQueue.length ? publicQueue.shift() : null;
+  const entry = selectedEntry || queuedEntry || (pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
+  if (shared && shared.onPublicQueueChange && queuedEntry) {
+    shared.onPublicQueueChange();
+  }
   const text    = (entry && entry.text)    || (shared && shared.scrollText)  || 'NOOLS';
   const color   = (entry && entry.color)   || (shared && shared.scrollColor) || '#ffffff';
   const rainbow = entry ? !!entry.rainbow : false;
   const { tape, tapeW, tapeH } = buildTape(text, H);
-  return { W, H, tape, tapeW, tapeH, lastText: text, scrollX: 0, scrollAcc: 0, totalScrolled: 0, done: false, color, rainbow, hue: Math.random() };
+  return { W, H, tape, tapeW, tapeH, lastText: text, lockedEntry: !!selectedEntry, scrollX: 0, scrollAcc: 0, totalScrolled: 0, done: false, color, rainbow, hue: Math.random() };
 }
 
 function frame(state, t, dt, config, shared) {
@@ -22,7 +28,7 @@ function frame(state, t, dt, config, shared) {
 
   // Live-update if there is exactly one pool entry (single-entry mode)
   const pool = (shared && shared.scrollPool) || [];
-  if (pool.length === 1) {
+  if (!state.lockedEntry && pool.length === 1) {
     const text = pool[0].text || 'NOOLS';
     if (text !== state.lastText) {
       const { tape, tapeW, tapeH } = buildTape(text, H);

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administration du panneau</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    min-height: 100vh; margin: 0; padding: 22px; display: grid; place-items: center;
+    background: #090909; color: #eee; font-family: system-ui, sans-serif;
+  }
+  main { width: min(100%, 390px); padding: 28px; border: 1px solid #292929; border-radius: 16px; background: #141414; }
+  h1 { margin: 0 0 6px; color: #f90; font-size: 25px; }
+  p { margin: 0 0 24px; color: #888; }
+  label { display: block; margin: 15px 0 6px; color: #bbb; font-size: 13px; font-weight: 700; }
+  input {
+    width: 100%; padding: 12px; border: 1px solid #333; border-radius: 8px;
+    background: #090909; color: #fff; font: inherit; outline: none;
+  }
+  input:focus { border-color: #f90; }
+  button { width: 100%; margin-top: 22px; padding: 13px; border: 0; border-radius: 8px; background: #f80; color: #111; font: inherit; font-weight: 900; }
+  #error { display: none; margin: 16px 0 0; color: #ff7777; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Administration</h1>
+  <p>Connexion réservée au pilotage du panneau.</p>
+  <form method="post" action="/admin/login">
+    <label for="username">Utilisateur</label>
+    <input id="username" name="username" value="admin" required autocomplete="username">
+    <label for="password">Mot de passe</label>
+    <input id="password" name="password" type="password" required autofocus autocomplete="current-password">
+    <button type="submit">Se connecter</button>
+    <div id="error" role="alert"></div>
+  </form>
+</main>
+<script>
+  const error = new URLSearchParams(location.search).get('error');
+  if (error) {
+    const element = document.getElementById('error');
+    element.style.display = 'block';
+    element.textContent = error === 'rate'
+      ? 'Trop de tentatives. Attends cinq minutes.'
+      : 'Utilisateur ou mot de passe incorrect.';
+  }
+</script>
+</body>
+</html>

@@ -47,7 +47,7 @@ function frame(state, t, dt, config) {
     }
     state.hue = (state.hue + HUE_STEP_PS) % 1;
   }
-  return buf;
+  return buf.slice(); // return a copy — buf is persistent state, must not be mutated by the server's brightness pass
 }
 
 module.exports = { name, init, frame };

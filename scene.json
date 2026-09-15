@@ -1,0 +1,42 @@
+{
+  "version": 2,
+  "selectedSceneId": "b7b60a69-a3de-40d8-8ff5-e87aca01e4f2",
+  "scenes": [
+    {
+      "id": "931c3500-97c4-47b2-94ac-7d8ba8a03e0b",
+      "name": "SCÈNE 5",
+      "loop": false,
+      "cues": [
+        {
+          "effectId": "bouncing_balls",
+          "duration": 10,
+          "color": "#00a3f5",
+          "rainbow": true
+        },
+        {
+          "effectId": "bouncing_balls",
+          "duration": 10,
+          "color": "#00a3f5",
+          "rainbow": true
+        }
+      ]
+    },
+    {
+      "id": "b7b60a69-a3de-40d8-8ff5-e87aca01e4f2",
+      "name": "SCÈNE 2",
+      "loop": true,
+      "cues": [
+        {
+          "effectId": "moving_tile_puzzle",
+          "duration": 10
+        },
+        {
+          "effectId": "media",
+          "duration": 40,
+          "mediaId": "media-269234c940966bc58c78",
+          "mediaName": "New Piskel.gif"
+        }
+      ]
+    }
+  ]
+}

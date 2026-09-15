@@ -1,27 +1,28 @@
 {
   "scrollPool": [
     {
-      "text": "NOOLS dddddddddddddNOOLS dddddddddddddNFINNN",
+      "text": "ON VOUS AIME BORDEEELLL MERCIIIIIII ",
       "color": "#ffffff",
       "rainbow": false
     },
     {
-      "text": "fdxfdxccccc",
-      "color": "#ff0000",
-      "rainbow": false
-    },
-    {
-      "text": "aaaa",
-      "color": "#088aaa",
+      "text": "",
+      "color": "#ffffff",
       "rainbow": false
     }
   ],
   "staticPool": [
     {
-      "text": "NOOLS",
+      "text": "POUET",
+      "color": "#ff8800",
+      "rainbow": true
+    },
+    {
+      "text": "",
       "color": "#ff8800",
       "rainbow": false
     }
   ],
+  "publicQueue": [],
   "djName": ""
 }
