@@ -8,6 +8,7 @@ const fs      = require('fs');
 const dgram   = require('dgram');
 const crypto  = require('crypto');
 const express = require('express');
+const { createPublicMessageStore } = require('./lib/public-message-store');
 
 // ── Panel geometry ─────────────────────────────────────────────────────────────
 const W                 = 60;
@@ -28,9 +29,12 @@ const ADMIN_PASSWORD            = process.env.ADMIN_PASSWORD || '';
 const SESSION_SECRET            = process.env.SESSION_SECRET || ADMIN_PASSWORD;
 const ADMIN_SESSION_SECONDS     = 12 * 60 * 60;
 const PUBLIC_MESSAGE_MAX_LENGTH = 80;
-const PUBLIC_QUEUE_MAX          = 30;
-const PUBLIC_RATE_LIMIT         = 3;
-const PUBLIC_RATE_WINDOW_MS     = 60 * 1000;
+const PUBLIC_MESSAGE_MAX_ACTIVE = 50;
+const PUBLIC_COOLDOWN_MS        = (Number(process.env.PUBLIC_COOLDOWN_SECONDS) || 20) * 1000;
+const PUBLIC_RATE_LIMIT         = Number(process.env.PUBLIC_RATE_LIMIT) || 3;
+const PUBLIC_RATE_WINDOW_MS     = (Number(process.env.PUBLIC_RATE_WINDOW_SECONDS) || 300) * 1000;
+const PUBLIC_GLOBAL_RATE_LIMIT  = Number(process.env.PUBLIC_GLOBAL_RATE_LIMIT) || 30;
+const PUBLIC_DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
 const MEDIA_MAX_FRAMES          = 180;
 const MEDIA_MAX_ENTRIES         = 30;
 const MEDIA_FRAME_BYTES         = W * H * 3;
@@ -123,6 +127,7 @@ const EFFECT_DEFAULTS = {
   pumping_circle:      { duration: 10, freq: 2,  rainbow: true,  color: '#ff0080' },
   scroll_text:         { duration: 12, freq: 3 },
   static_text:         { duration: 10, freq: 2 },
+  public_messages:     { duration: 8,  freq: 3, speed: 30 },
   media:               { duration: 20, freq: 1, enabled: false },
   simple_color_scroll: { duration: 8,  freq: 2,  rainbow: true,  color: '#00ff80' },
   c64_loadscreen:      { duration: 10, freq: 1,  rainbow: true,  color: '#ff8800' },
@@ -161,12 +166,15 @@ function saveConfig() {
 const TEXT_PATH = path.join(__dirname, 'text.json');
 const MEDIA_PATH = path.join(__dirname, 'media.json');
 const SCENE_PATH = path.join(__dirname, 'scene.json');
+const MESSAGES_PATH = path.join(__dirname, 'messages.json');
 let savedText = {};
 try { savedText = JSON.parse(fs.readFileSync(TEXT_PATH, 'utf8')); } catch {}
 let savedMedia = null;
 try { savedMedia = JSON.parse(fs.readFileSync(MEDIA_PATH, 'utf8')); } catch {}
 let savedScenes = { name: 'SCÈNE 1', loop: false, cues: [] };
 try { savedScenes = JSON.parse(fs.readFileSync(SCENE_PATH, 'utf8')); } catch {}
+let savedMessages = {};
+try { savedMessages = JSON.parse(fs.readFileSync(MESSAGES_PATH, 'utf8')); } catch {}
 
 function normalizeMediaLibrary(value) {
   const candidates = Array.isArray(value && value.entries)
@@ -191,12 +199,41 @@ function normalizeMediaLibrary(value) {
   };
 }
 
+const messageStore = createPublicMessageStore(savedMessages, {
+  legacyQueue: savedText.publicQueue,
+  maxActive: PUBLIC_MESSAGE_MAX_ACTIVE,
+  maxHistory: 100,
+  defaultMaxMessagesPerIp: PUBLIC_RATE_LIMIT,
+});
+
+function publicMessagesAdminView() {
+  const view = messageStore.adminView();
+  view.settings.rateWindowSeconds = Math.ceil(PUBLIC_RATE_WINDOW_MS / 1000);
+  return view;
+}
+
 const shared = {
   scrollPool: savedText.scrollPool || [{ text: 'NOOLS', color: '#ffffff', rainbow: false }],
   staticPool:  savedText.staticPool  || [{ text: 'NOOLS', color: '#ff8800', rainbow: false }],
-  publicQueue: Array.isArray(savedText.publicQueue) ? savedText.publicQueue.slice(0, PUBLIC_QUEUE_MAX) : [],
   djName:      savedText.djName      || '',
   mediaLibrary: normalizeMediaLibrary(savedMedia),
+  publicMessages: {
+    takeNext() {
+      const item = messageStore.takeNext();
+      if (item) saveMessages();
+      return item;
+    },
+    complete(id) {
+      const item = messageStore.complete(id);
+      if (item) saveMessages();
+      return item;
+    },
+    requeue(id) {
+      const item = messageStore.requeue(id);
+      if (item) saveMessages();
+      return item;
+    },
+  },
 };
 
 function saveText() {
@@ -204,13 +241,25 @@ function saveText() {
     fs.writeFileSync(TEXT_PATH, JSON.stringify({
       scrollPool: shared.scrollPool,
       staticPool: shared.staticPool,
-      publicQueue: shared.publicQueue,
       djName: shared.djName,
     }, null, 2));
   } catch {}
 }
 
-shared.onPublicQueueChange = saveText;
+function saveMessages() {
+  try {
+    const temporaryPath = `${MESSAGES_PATH}.tmp`;
+    fs.writeFileSync(temporaryPath, JSON.stringify(messageStore.snapshot(), null, 2));
+    fs.renameSync(temporaryPath, MESSAGES_PATH);
+    return true;
+  } catch (error) {
+    console.warn(`Could not persist public messages: ${error.message}`);
+    return false;
+  }
+}
+
+saveMessages();
+if (Array.isArray(savedText.publicQueue)) saveText();
 
 function saveMedia() {
   try {
@@ -279,7 +328,7 @@ function normalizeScene(value, fallbackId = 'scene-1') {
     name: String(source.name || 'SCÈNE 1').replace(/[\u0000-\u001F\u007F]/g, ' ').trim().slice(0, 60) || 'SCÈNE 1',
     loop: !!source.loop,
     cues: cues.flatMap(cue => {
-      if (!cue || typeof cue !== 'object' || !effectMap[cue.effectId]) return [];
+      if (!cue || typeof cue !== 'object' || !effectMap[cue.effectId] || cue.effectId === 'public_messages') return [];
       const duration = Number(cue.duration);
       const normalized = {
         effectId: cue.effectId,
@@ -338,7 +387,10 @@ function playingScene() {
 }
 
 function enabledEffects() {
-  return effectsList.filter(e => getCfg(e.name).enabled);
+  return effectsList.filter(effect =>
+    getCfg(effect.name).enabled &&
+    (effect.name !== 'public_messages' || messageStore.hasApproved())
+  );
 }
 
 function pickNextEffect() {
@@ -355,6 +407,10 @@ function pickNextEffect() {
 
 function switchTo(effect, options) {
   if (!effect) return;
+  if (currentEffect && currentState && typeof currentEffect.stop === 'function') {
+    try { currentEffect.stop(currentState, shared); }
+    catch (error) { console.warn('stop error for ' + currentEffect.name + ': ' + error.message); }
+  }
   currentEffect   = effect;
   effectStartTime = Date.now() / 1000;
   currentConfigOverrides = options && options.config ? options.config : null;
@@ -422,8 +478,7 @@ function applyActiveCueLook() {
 
 function finishScene() {
   leaveSceneMode();
-  const queuedTextEffect = shared.publicQueue.length ? effectMap.scroll_text : null;
-  switchTo(queuedTextEffect || pickNextEffect());
+  switchTo(pickNextEffect());
 }
 
 function advanceScene(step = 1) {
@@ -486,8 +541,7 @@ setInterval(() => {
     const dur = getCfg(currentEffect.name).duration;
     const effectReady = currentState.done !== false; // false means "not yet done"; undefined/true = ok
     if (t >= dur && effectReady) {
-      const queuedTextEffect = shared.publicQueue.length ? effectMap.scroll_text : null;
-      switchTo(queuedTextEffect || pickNextEffect());
+      switchTo(pickNextEffect());
     }
   }
 
@@ -569,21 +623,42 @@ function requireAdmin(req, res, next) {
   return res.redirect(303, '/admin/login');
 }
 
-function allowRate(key, limit, windowMs) {
+function checkRateLimits(rules) {
   const now = Date.now();
-  const recent = (rateBuckets.get(key) || []).filter(timestamp => now - timestamp < windowMs);
-  if (recent.length >= limit) {
-    rateBuckets.set(key, recent);
-    return false;
-  }
-  recent.push(now);
-  rateBuckets.set(key, recent);
-  if (rateBuckets.size > 500) {
-    for (const [bucketKey, timestamps] of rateBuckets) {
-      if (!timestamps.some(timestamp => now - timestamp < windowMs)) rateBuckets.delete(bucketKey);
+  const buckets = rules.map(rule => ({
+    ...rule,
+    recent: (rateBuckets.get(rule.key) || [])
+      .filter(timestamp => now - timestamp < rule.windowMs),
+  }));
+  let retryAfterMs = 0;
+  for (const bucket of buckets) {
+    rateBuckets.set(bucket.key, bucket.recent);
+    if (bucket.recent.length >= bucket.limit) {
+      retryAfterMs = Math.max(
+        retryAfterMs,
+        bucket.windowMs - (now - bucket.recent[0])
+      );
     }
   }
-  return true;
+  if (retryAfterMs > 0) {
+    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMs / 1000)) };
+  }
+  for (const bucket of buckets) {
+    bucket.recent.push(now);
+    rateBuckets.set(bucket.key, bucket.recent);
+  }
+  if (rateBuckets.size > 500) {
+    for (const [bucketKey, timestamps] of rateBuckets) {
+      if (!timestamps.some(timestamp => now - timestamp < PUBLIC_RATE_WINDOW_MS)) {
+        rateBuckets.delete(bucketKey);
+      }
+    }
+  }
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
+function allowRate(key, limit, windowMs) {
+  return checkRateLimits([{ key, limit, windowMs }]).allowed;
 }
 
 function normalizePublicMessage(value) {
@@ -600,8 +675,40 @@ function normalizePublicMessage(value) {
   return { text };
 }
 
+function publicClientHash(req) {
+  const rawClientId = req.body && req.body.clientId;
+  const clientId = typeof rawClientId === 'string' && /^[a-zA-Z0-9_-]{16,100}$/.test(rawClientId)
+    ? rawClientId
+    : 'anonymous';
+  return crypto.createHash('sha256')
+    .update(String(req.ip || ''))
+    .update('\0')
+    .update(clientId)
+    .digest('hex');
+}
+
+function publicIpHash(req) {
+  return crypto.createHash('sha256')
+    .update(String(req.ip || ''))
+    .digest('hex');
+}
+
+function publicSubmissionResponse(item) {
+  const status = messageStore.getPublicStatus(item.id, item.receipt);
+  return {
+    ok: true,
+    id: item.id,
+    receipt: item.receipt,
+    ...status,
+  };
+}
+
 app.get('/', (req, res) => res.redirect(302, '/message'));
 app.get(['/message', '/message/'], (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'message.html')));
+app.get('/message.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(path.join(PUBLIC_DIR, 'message.js'));
+});
 
 app.get('/admin/login', (req, res) => {
   if (hasValidAdminSession(req)) return res.redirect(303, '/admin/');
@@ -643,27 +750,63 @@ app.get('/admin/vendor/gifuct.js', requireAdmin, (req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, 'vendor', 'gifuct.js'));
 });
 
-// The only unauthenticated write endpoint. Messages are displayed once, in order.
+app.get('/api/public/messages/config', (req, res) => {
+  return res.json({
+    mode: messageStore.getMode(),
+    maxLength: PUBLIC_MESSAGE_MAX_LENGTH,
+    cooldownSeconds: Math.ceil(PUBLIC_COOLDOWN_MS / 1000),
+  });
+});
+
+app.get('/api/public/messages/:id/status', (req, res) => {
+  const status = messageStore.getPublicStatus(req.params.id, req.query.receipt);
+  if (!status) return res.status(404).json({ error: 'Suivi de message introuvable.' });
+  res.setHeader('Cache-Control', 'no-store');
+  return res.json(status);
+});
+
+// The only unauthenticated write endpoint. It never interrupts the current visual.
 app.post('/api/public/message', (req, res) => {
-  const key = `message:${req.ip}`;
-  if (!allowRate(key, PUBLIC_RATE_LIMIT, PUBLIC_RATE_WINDOW_MS)) {
-    return res.status(429).json({ error: 'Trop de messages. Réessaie dans une minute.' });
-  }
   const normalized = normalizePublicMessage(req.body && req.body.text);
   if (normalized.error) return res.status(400).json({ error: normalized.error });
-  if (shared.publicQueue.length >= PUBLIC_QUEUE_MAX) {
+
+  const clientHash = publicClientHash(req);
+  const ipHash = publicIpHash(req);
+  const maxMessagesPerIp = messageStore.getSettings().maxMessagesPerIp;
+  if (messageStore.countActiveForIp(ipHash) >= maxMessagesPerIp) {
+    return res.status(429).json({
+      error: `Cette connexion a déjà ${maxMessagesPerIp} message${maxMessagesPerIp > 1 ? 's' : ''} en attente. Attends leur passage.`,
+    });
+  }
+  if (messageStore.isRecentDuplicate(normalized.text, clientHash, PUBLIC_DUPLICATE_WINDOW_MS)) {
+    return res.status(409).json({ error: 'Ce message a déjà été envoyé récemment.' });
+  }
+
+  const rate = checkRateLimits([
+    { key: `message:cooldown:${clientHash}`, limit: 1, windowMs: PUBLIC_COOLDOWN_MS },
+    { key: `message:ip:${ipHash}`, limit: maxMessagesPerIp, windowMs: PUBLIC_RATE_WINDOW_MS },
+    { key: 'message:global', limit: PUBLIC_GLOBAL_RATE_LIMIT, windowMs: 60 * 1000 },
+  ]);
+  if (!rate.allowed) {
+    res.setHeader('Retry-After', String(rate.retryAfterSeconds));
+    return res.status(429).json({
+      error: `Trop de messages. Réessaie dans ${rate.retryAfterSeconds} seconde${rate.retryAfterSeconds > 1 ? 's' : ''}.`,
+      retryAfterSeconds: rate.retryAfterSeconds,
+    });
+  }
+
+  const item = messageStore.submit({
+    text: normalized.text,
+    color: req.body && req.body.color,
+    rainbow: !!(req.body && req.body.rainbow),
+    clientHash,
+    ipHash,
+  });
+  if (!item) {
     return res.status(429).json({ error: 'La file est pleine. Réessaie un peu plus tard.' });
   }
-  const color = /^#[0-9a-f]{6}$/i.test(req.body.color || '') ? req.body.color : '#ffffff';
-  shared.publicQueue.push({ text: normalized.text, color, rainbow: !!req.body.rainbow });
-  saveText();
-
-  // Start the public queue promptly, but never interrupt a message already scrolling.
-  if (!scenePlayback.active && effectMap.scroll_text && (currentEffect !== effectMap.scroll_text || currentState.done)) {
-    override = false;
-    switchTo(effectMap.scroll_text);
-  }
-  return res.status(201).json({ ok: true, queued: shared.publicQueue.length });
+  saveMessages();
+  return res.status(201).json(publicSubmissionResponse(item));
 });
 
 // Everything below /api/public requires an authenticated admin session.
@@ -696,10 +839,10 @@ app.get('/api/state', (req, res) => {
       cueIndex: scenePlayback.cueIndex,
       cueCount: activeScene ? activeScene.cues.length : 0,
     },
+    publicMessages: publicMessagesAdminView(),
     shared: {
       scrollPool: shared.scrollPool,
       staticPool: shared.staticPool,
-      publicQueue: shared.publicQueue,
       djName: shared.djName,
       media: mediaMetadata(),
     },
@@ -709,6 +852,51 @@ app.get('/api/state', (req, res) => {
       ...getCfg(e.name),
     })),
   });
+});
+
+app.post('/api/public-messages/mode', (req, res) => {
+  const result = messageStore.setMode(req.body && req.body.mode);
+  if (!result) return res.status(400).json({ error: 'Mode inconnu.' });
+  const persisted = saveMessages();
+  return res.json({ ok: true, ...result, persisted, publicMessages: publicMessagesAdminView() });
+});
+
+app.post('/api/public-messages/settings', (req, res) => {
+  const settings = messageStore.setSettings(req.body);
+  if (!settings) {
+    return res.status(400).json({ error: 'La limite doit être un nombre entier entre 1 et 100.' });
+  }
+  const persisted = saveMessages();
+  return res.json({ ok: true, persisted, publicMessages: publicMessagesAdminView() });
+});
+
+app.post('/api/public-messages/:id/approve', (req, res) => {
+  const item = messageStore.approve(req.params.id);
+  if (!item) return res.status(409).json({ error: 'Ce message ne peut pas être validé.' });
+  const persisted = saveMessages();
+  return res.json({ ok: true, persisted, publicMessages: publicMessagesAdminView() });
+});
+
+app.post('/api/public-messages/:id/reject', (req, res) => {
+  const item = messageStore.reject(req.params.id);
+  if (!item) return res.status(409).json({ error: 'Ce message ne peut pas être retiré.' });
+  const persisted = saveMessages();
+  return res.json({ ok: true, persisted, publicMessages: publicMessagesAdminView() });
+});
+
+app.post('/api/public-messages/next', (req, res) => {
+  const effect = effectMap.public_messages;
+  if (!effect || !messageStore.hasApproved()) {
+    return res.status(409).json({ error: 'Aucun message validé dans la file.' });
+  }
+  if (currentEffect === effect && currentState && currentState.done === false) {
+    return res.status(409).json({ error: 'Un message public est déjà en cours.' });
+  }
+  leaveSceneMode();
+  switchTo(effect);
+  override = true;
+  overrideUntil = Date.now() / 1000 + getCfg(effect.name).duration;
+  return res.json({ ok: true, playing: effect.name, publicMessages: publicMessagesAdminView() });
 });
 
 // POST /api/effects/:id/config
@@ -734,6 +922,9 @@ app.post('/api/effects/:id/play', (req, res) => {
   const id = req.params.id;
   const effect = effectMap[id];
   if (!effect) return res.status(404).json({ error: 'not found' });
+  if (id === 'public_messages' && !messageStore.hasApproved()) {
+    return res.status(409).json({ error: 'Aucun message validé dans la file.' });
+  }
   leaveSceneMode();
   switchTo(effect);
   override      = true;

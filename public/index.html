@@ -178,6 +178,32 @@
   @media (max-width: 560px) {
     .cue-row { grid-template-columns: 24px minmax(70px, 1fr) 60px auto auto auto; gap: 4px; }
   }
+  .public-message-card { background: #171717; border-radius: 10px; padding: 14px; }
+  .public-message-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .public-message-toolbar .label { color: #888; font-size: 12px; font-weight: 800; text-transform: uppercase; }
+  .message-mode-btn.active { background: #f90; color: #111; }
+  .public-message-summary { color: #888; font-size: 12px; flex: 1; min-width: 170px; }
+  .public-message-settings { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: -2px 0 12px; padding: 9px; background: #101010; border: 1px solid #292929; border-radius: 8px; }
+  .public-message-settings label { color: #aaa; font-size: 12px; font-weight: 700; }
+  .public-message-settings input { width: 64px; background: #090909; border: 1px solid #444; color: #fff; padding: 6px 8px; border-radius: 5px; }
+  .public-message-limit-window, .public-message-settings-status { color: #777; font-size: 11px; }
+  .public-message-settings-status.saved { color: #8f8; }
+  .public-message-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .public-message-column { min-width: 0; padding: 10px; background: #101010; border: 1px solid #292929; border-radius: 8px; }
+  .public-message-column h3 { margin: 0 0 8px; color: #aaa; font-size: 12px; text-transform: uppercase; }
+  .public-message-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px; border-top: 1px solid #242424; }
+  .public-message-row:first-child { border-top: 0; }
+  .public-message-text { overflow-wrap: anywhere; color: #eee; }
+  .public-message-meta { margin-top: 3px; color: #777; font-size: 11px; }
+  .public-message-actions { display: flex; gap: 5px; }
+  .public-message-actions button { min-width: 34px; padding: 6px 8px; }
+  .public-message-empty { padding: 10px 4px; color: #666; font-size: 13px; }
+  .public-message-playing { margin-bottom: 10px; padding: 10px; border: 1px solid #59410f; border-radius: 8px; background: #231b0c; color: #ffbd4a; }
+  .public-message-history { margin-top: 10px; color: #777; font-size: 12px; }
+  .public-message-history summary { cursor: pointer; color: #999; }
+  @media (max-width: 680px) {
+    .public-message-grid { grid-template-columns: 1fr; }
+  }
 </style>
 </head>
 <body>
@@ -222,6 +248,41 @@
         <input type="range" id="kickBrightSlider" min="0" max="100" value="100"
           oninput="document.getElementById('kickBrightVal').textContent=this.value+'%'">
       </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Messages publics</h2>
+    <div class="public-message-card">
+      <div class="public-message-toolbar">
+        <span class="label">Réception</span>
+        <button class="btn btn-dark message-mode-btn" id="messageModeAutomatic" type="button">AUTO</button>
+        <button class="btn btn-dark message-mode-btn" id="messageModeModerated" type="button">MODÉRÉ</button>
+        <span class="public-message-summary" id="publicMessageSummary">Chargement…</span>
+        <button class="btn play-btn" id="publicMessagePlayNext" type="button">▶ PROCHAIN</button>
+      </div>
+      <div class="public-message-settings">
+        <label for="publicMessageIpLimit">Messages maximum par IP</label>
+        <input id="publicMessageIpLimit" type="number" min="1" max="100" step="1" value="3">
+        <span class="public-message-limit-window" id="publicMessageLimitWindow">sur 5 minutes</span>
+        <button class="btn btn-dark" id="publicMessageSaveLimit" type="button">ENREGISTRER</button>
+        <span class="public-message-settings-status" id="publicMessageLimitStatus"></span>
+      </div>
+      <div class="public-message-playing" id="publicMessagePlaying" hidden></div>
+      <div class="public-message-grid">
+        <div class="public-message-column">
+          <h3>À valider <span id="publicPendingCount">0</span></h3>
+          <div id="publicPendingList"></div>
+        </div>
+        <div class="public-message-column">
+          <h3>File d&rsquo;affichage <span id="publicQueueCount">0</span></h3>
+          <div id="publicQueueList"></div>
+        </div>
+      </div>
+      <details class="public-message-history">
+        <summary>Historique récent</summary>
+        <div id="publicMessageHistory"></div>
+      </details>
     </div>
   </section>
 

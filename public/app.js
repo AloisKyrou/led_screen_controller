@@ -10,6 +10,7 @@ let selectedSceneId = null;
 let sceneConfig = { id: 'scene-1', name: 'SCÈNE 1', loop: false, cues: [] };
 let sceneLoaded = false;
 let sceneSaveQueue = Promise.resolve();
+let publicMessageFingerprint = '';
 
 // ── API helper ──────────────────────────────────────────────────────────────
 async function api(url, method = 'GET', body = null) {
@@ -116,11 +117,13 @@ async function poll() {
   }
   updateScenePlayback(s.scenePlayback);
 
+  if (s.publicMessages) renderPublicMessages(s.publicMessages);
+
   state = s;
 }
 
 // ── Effect list ─────────────────────────────────────────────────────────────
-const TEXT_EFFECT_IDS = ['scroll_text', 'static_text'];
+const TEXT_EFFECT_IDS = ['scroll_text', 'static_text', 'public_messages'];
 const MEDIA_EFFECT_IDS = ['media'];
 
 function makeEffectCard(e) {
@@ -251,6 +254,138 @@ function toggleRainbow(id) {
 }
 
 // ── Pool management ─────────────────────────────────────────────────────────
+function publicMessageTime(value) {
+  if (!value) return '';
+  return new Date(value).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function publicMessageRow(item, type) {
+  const row = document.createElement('div');
+  row.className = 'public-message-row';
+  row.style.borderLeft = `3px solid ${item.rainbow ? '#f90' : item.color || '#fff'}`;
+
+  const content = document.createElement('div');
+  const text = document.createElement('div');
+  text.className = 'public-message-text';
+  text.textContent = item.text;
+  content.appendChild(text);
+
+  const meta = document.createElement('div');
+  meta.className = 'public-message-meta';
+  if (type === 'pending') meta.textContent = `Reçu à ${publicMessageTime(item.createdAt)}`;
+  else if (type === 'queue') meta.textContent = `Position ${item.position}`;
+  else meta.textContent = item.status === 'displayed' ? 'Affiché' : 'Refusé';
+  content.appendChild(meta);
+  row.appendChild(content);
+
+  if (type === 'pending' || type === 'queue') {
+    const actions = document.createElement('div');
+    actions.className = 'public-message-actions';
+    if (type === 'pending') {
+      const approve = document.createElement('button');
+      approve.className = 'btn play-btn';
+      approve.type = 'button';
+      approve.textContent = '✓';
+      approve.title = 'Valider ce message';
+      approve.onclick = () => moderatePublicMessage(item.id, 'approve');
+      actions.appendChild(approve);
+    }
+    const reject = document.createElement('button');
+    reject.className = 'btn btn-red';
+    reject.type = 'button';
+    reject.textContent = '✕';
+    reject.title = type === 'pending' ? 'Refuser ce message' : 'Retirer de la file';
+    reject.onclick = () => moderatePublicMessage(item.id, 'reject');
+    actions.appendChild(reject);
+    row.appendChild(actions);
+  }
+  return row;
+}
+
+function renderPublicMessageList(elementId, items, type, emptyText) {
+  const container = document.getElementById(elementId);
+  container.innerHTML = '';
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'public-message-empty';
+    empty.textContent = emptyText;
+    container.appendChild(empty);
+    return;
+  }
+  items.forEach(item => container.appendChild(publicMessageRow(item, type)));
+}
+
+function renderPublicMessages(data) {
+  const fingerprint = JSON.stringify(data);
+  if (fingerprint === publicMessageFingerprint) return;
+  publicMessageFingerprint = fingerprint;
+
+  document.getElementById('messageModeAutomatic').classList.toggle('active', data.mode === 'automatic');
+  document.getElementById('messageModeModerated').classList.toggle('active', data.mode === 'moderated');
+  document.getElementById('publicPendingCount').textContent = data.pending.length;
+  document.getElementById('publicQueueCount').textContent = data.queue.length;
+  document.getElementById('publicMessageSummary').textContent = data.mode === 'automatic'
+    ? 'Validation automatique'
+    : 'Validation manuelle';
+
+  const settings = data.settings || {};
+  const limitInput = document.getElementById('publicMessageIpLimit');
+  if (document.activeElement !== limitInput && settings.maxMessagesPerIp) {
+    limitInput.value = settings.maxMessagesPerIp;
+  }
+  const windowSeconds = Number(settings.rateWindowSeconds) || 300;
+  const windowLabel = windowSeconds % 60 === 0
+    ? `${windowSeconds / 60} minute${windowSeconds === 60 ? '' : 's'}`
+    : `${windowSeconds} secondes`;
+  document.getElementById('publicMessageLimitWindow').textContent = `sur ${windowLabel}`;
+
+  const playing = document.getElementById('publicMessagePlaying');
+  const current = data.playing[0];
+  playing.hidden = !current;
+  playing.textContent = current ? `Affiché maintenant : ${current.text}` : '';
+
+  const playNext = document.getElementById('publicMessagePlayNext');
+  playNext.disabled = !data.queue.length || !!current;
+
+  renderPublicMessageList('publicPendingList', data.pending, 'pending', 'Aucun message à valider.');
+  renderPublicMessageList('publicQueueList', data.queue, 'queue', 'La file est vide.');
+  renderPublicMessageList('publicMessageHistory', data.history, 'history', 'Aucun historique.');
+}
+
+async function setPublicMessageMode(mode) {
+  const result = await api('/api/public-messages/mode', 'POST', { mode });
+  if (result && result.publicMessages) renderPublicMessages(result.publicMessages);
+}
+
+async function savePublicMessageLimit() {
+  const input = document.getElementById('publicMessageIpLimit');
+  const status = document.getElementById('publicMessageLimitStatus');
+  const maxMessagesPerIp = Number(input.value);
+  status.classList.remove('saved');
+  if (!Number.isInteger(maxMessagesPerIp) || maxMessagesPerIp < 1 || maxMessagesPerIp > 100) {
+    status.textContent = 'Choisir un nombre entre 1 et 100.';
+    return;
+  }
+  const result = await api('/api/public-messages/settings', 'POST', { maxMessagesPerIp });
+  if (!result) {
+    status.textContent = 'Enregistrement impossible.';
+    return;
+  }
+  status.textContent = 'Enregistré.';
+  status.classList.add('saved');
+  if (result.publicMessages) renderPublicMessages(result.publicMessages);
+}
+
+async function moderatePublicMessage(id, action) {
+  const result = await api(`/api/public-messages/${encodeURIComponent(id)}/${action}`, 'POST');
+  if (result && result.publicMessages) renderPublicMessages(result.publicMessages);
+}
+
+async function playNextPublicMessage() {
+  const result = await api('/api/public-messages/next', 'POST');
+  if (result && result.publicMessages) renderPublicMessages(result.publicMessages);
+}
+
 function renderPool(type) {
   const pool = type === 'scroll' ? scrollPool : staticPool;
   const container = document.getElementById(type === 'scroll' ? 'scrollPool' : 'staticPool');
@@ -349,7 +484,7 @@ function refreshSceneEffectOptions(effects) {
   const effectsGroup = document.createElement('optgroup');
   effectsGroup.label = 'Effets';
   available
-    .filter(effect => effect.id !== 'scroll_text' && effect.id !== 'static_text' && effect.id !== 'media')
+    .filter(effect => !['scroll_text', 'static_text', 'media', 'public_messages'].includes(effect.id))
     .forEach(effect => addOption(effectsGroup, effect.name, `effect|${effect.id}`));
   select.appendChild(effectsGroup);
 
@@ -887,6 +1022,10 @@ renderPool('static');
 document.getElementById('mediaFile').addEventListener('change', prepareSelectedMedia);
 document.getElementById('mediaFit').addEventListener('change', prepareSelectedMedia);
 document.getElementById('mediaUploadBtn').addEventListener('click', uploadPreparedMedia);
+document.getElementById('messageModeAutomatic').addEventListener('click', () => setPublicMessageMode('automatic'));
+document.getElementById('messageModeModerated').addEventListener('click', () => setPublicMessageMode('moderated'));
+document.getElementById('publicMessagePlayNext').addEventListener('click', playNextPublicMessage);
+document.getElementById('publicMessageSaveLimit').addEventListener('click', savePublicMessageLimit);
 document.getElementById('sceneSelect').addEventListener('change', event => selectScene(event.target.value));
 document.getElementById('sceneCreateBtn').addEventListener('click', createScene);
 document.getElementById('sceneDeleteBtn').addEventListener('click', deleteSelectedScene);

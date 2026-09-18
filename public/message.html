@@ -40,13 +40,20 @@
   #status { min-height: 24px; margin: 16px 2px 0; text-align: center; font-weight: 700; }
   #status.ok { color: #70e58b; }
   #status.error { color: #ff7979; }
+  .tracking {
+    display: none; margin-top: 18px; padding: 16px; border: 1px solid #3b3222;
+    border-radius: 13px; background: #18140d;
+  }
+  .tracking.show { display: block; }
+  .tracking-title { color: #ffb13b; font-size: 17px; font-weight: 900; }
+  .tracking-detail { margin-top: 6px; color: #bbb; line-height: 1.45; }
 </style>
 </head>
 <body>
 <main>
   <div class="eyebrow">Panneau LED</div>
   <h1>Écris sur l’écran</h1>
-  <p class="intro">Ton message sera ajouté à la file et défilera une fois sur le panneau.</p>
+  <p class="intro" id="intro">Ton message sera ajouté à la file et défilera une fois sur le panneau.</p>
 
   <form id="messageForm">
     <label for="message">Ton message</label>
@@ -61,47 +68,13 @@
     <button type="submit" id="submitButton">Envoyer sur l’écran</button>
     <div id="status" role="status" aria-live="polite"></div>
   </form>
+
+  <div class="tracking" id="tracking" aria-live="polite">
+    <div class="tracking-title" id="trackingTitle"></div>
+    <div class="tracking-detail" id="trackingDetail"></div>
+  </div>
 </main>
 
-<script>
-  const form = document.getElementById('messageForm');
-  const message = document.getElementById('message');
-  const counter = document.getElementById('counter');
-  const status = document.getElementById('status');
-  const button = document.getElementById('submitButton');
-
-  message.addEventListener('input', () => {
-    counter.textContent = `${[...message.value].length} / 80`;
-  });
-
-  form.addEventListener('submit', async event => {
-    event.preventDefault();
-    button.disabled = true;
-    status.className = '';
-    status.textContent = 'Envoi…';
-    try {
-      const response = await fetch('/api/public/message', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: message.value,
-          color: document.getElementById('color').value,
-          rainbow: document.getElementById('rainbow').checked,
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Envoi impossible.');
-      status.className = 'ok';
-      status.textContent = 'Message envoyé ! Regarde le panneau.';
-      message.value = '';
-      counter.textContent = '0 / 80';
-    } catch (error) {
-      status.className = 'error';
-      status.textContent = error.message || 'Le panneau ne répond pas.';
-    } finally {
-      button.disabled = false;
-    }
-  });
-</script>
+<script src="/message.js"></script>
 </body>
 </html>

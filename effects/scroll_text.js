@@ -9,13 +9,8 @@ const SCROLL_SPEED = 30; // pixels per second
 
 function init(W, H, config, shared, options) {
   const pool = (shared && shared.scrollPool) || [];
-  const publicQueue = (shared && shared.publicQueue) || [];
   const selectedEntry = options && options.entry;
-  const queuedEntry = !selectedEntry && publicQueue.length ? publicQueue.shift() : null;
-  const entry = selectedEntry || queuedEntry || (pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
-  if (shared && shared.onPublicQueueChange && queuedEntry) {
-    shared.onPublicQueueChange();
-  }
+  const entry = selectedEntry || (pool.length ? pool[Math.floor(Math.random() * pool.length)] : null);
   const text    = (entry && entry.text)    || (shared && shared.scrollText)  || 'NOOLS';
   const color   = (entry && entry.color)   || (shared && shared.scrollColor) || '#ffffff';
   const rainbow = entry ? !!entry.rainbow : false;
