@@ -37,14 +37,34 @@
   </form>
 </main>
 <script>
-  const error = new URLSearchParams(location.search).get('error');
-  if (error) {
-    const element = document.getElementById('error');
-    element.style.display = 'block';
-    element.textContent = error === 'rate'
-      ? 'Trop de tentatives. Attends cinq minutes.'
-      : 'Utilisateur ou mot de passe incorrect.';
+  const previousError = new URLSearchParams(location.search).get('error');
+  const element = document.getElementById('error');
+  let blockedUntil = 0;
+  let credentialsError = previousError === 'credentials';
+  if (previousError) history.replaceState(null, '', location.pathname);
+
+  function renderLoginStatus() {
+    const remaining = Math.max(0, Math.ceil((blockedUntil - Date.now()) / 1000));
+    element.style.display = remaining || credentialsError ? 'block' : 'none';
+    element.textContent = remaining
+      ? `Trop de tentatives depuis cette adresse IP. Réessaie dans ${Math.floor(remaining / 60)} min ${String(remaining % 60).padStart(2, '0')} s.`
+      : credentialsError ? 'Utilisateur ou mot de passe incorrect.' : '';
   }
+  async function refreshLoginStatus() {
+    try {
+      const response = await fetch('/admin/login/status', { cache: 'no-store' });
+      if (!response.ok) return;
+      const status = await response.json();
+      if (status.blocked) credentialsError = false;
+      blockedUntil = Date.now() + status.retryAfterSeconds * 1000;
+      renderLoginStatus();
+    } catch {} // Keep the form usable if a status request fails.
+  }
+  renderLoginStatus();
+  refreshLoginStatus();
+  setInterval(renderLoginStatus, 1000);
+  setInterval(refreshLoginStatus, 5000);
+  window.addEventListener('focus', refreshLoginStatus);
 </script>
 </body>
 </html>

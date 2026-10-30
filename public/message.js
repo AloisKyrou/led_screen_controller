@@ -15,6 +15,12 @@ const RECEIPT_KEY = 'nools-public-message-receipt';
 let activeReceipt = null;
 let trackingTimer = null;
 let cooldownTimer = null;
+let sending = false;
+
+function setSubmissionDisabled(disabled) {
+  button.disabled = disabled;
+  document.getElementById('gifSubmit').disabled = disabled;
+}
 
 function randomClientId() {
   const bytes = new Uint8Array(16);
@@ -48,32 +54,33 @@ function setTracking(title, detail) {
 }
 
 function renderMessageStatus(result) {
+  const noun = result.kind === 'gif' ? 'GIF' : 'Message';
   switch (result.status) {
     case 'pending':
       setTracking(
         'En attente de validation',
         result.pendingPosition
           ? `Demande n°${result.pendingPosition} dans la liste de modération.`
-          : 'L\u2019équipe va examiner ton message.'
+          : 'L\u2019équipe va examiner ton envoi.'
       );
       break;
     case 'approved':
       setTracking(
-        'Message validé',
+        `${noun} validé`,
         result.position
           ? `Position ${result.position} dans la file. Il apparaîtra entre les autres visuels.`
           : 'Il apparaîtra bientôt entre les autres visuels.'
       );
       break;
     case 'playing':
-      setTracking('Ton message est à l\u2019écran !', 'Regarde le panneau maintenant.');
+      setTracking(`Ton ${noun.toLowerCase()} est à l’écran !`, 'Regarde le panneau maintenant.');
       break;
     case 'displayed':
-      setTracking('Message affiché', 'Merci pour ta participation.');
+      setTracking(`${noun} affiché`, 'Merci pour ta participation.');
       stopTracking();
       break;
     case 'rejected':
-      setTracking('Message non retenu', 'Tu pourras proposer un autre message un peu plus tard.');
+      setTracking(`${noun} non retenu`, 'Tu pourras proposer une autre création un peu plus tard.');
       stopTracking();
       break;
     default:
@@ -109,7 +116,7 @@ function trackReceipt(receipt) {
 function startCooldown(seconds, errorMessage) {
   let remaining = Math.max(1, Number(seconds) || 1);
   if (cooldownTimer) window.clearInterval(cooldownTimer);
-  button.disabled = true;
+  setSubmissionDisabled(true);
   const refresh = () => {
     status.className = 'error';
     status.textContent = `${errorMessage} (${remaining}s)`;
@@ -117,7 +124,7 @@ function startCooldown(seconds, errorMessage) {
     if (remaining < 0) {
       window.clearInterval(cooldownTimer);
       cooldownTimer = null;
-      button.disabled = false;
+      setSubmissionDisabled(false);
       status.textContent = '';
     }
   };
@@ -131,28 +138,35 @@ async function loadPublicConfig() {
     if (!response.ok) return;
     const config = await response.json();
     intro.textContent = config.mode === 'moderated'
-      ? 'Ton message sera envoyé à l\u2019équipe, puis ajouté à la file après validation.'
-      : 'Ton message sera ajouté à la file et apparaîtra entre les autres visuels.';
+      ? 'Messages et GIF seront ajoutés à la file après validation par l’équipe.'
+      : 'Les messages rejoignent la file directement. Les GIF sont vérifiés par l’équipe avant diffusion.';
   } catch {}
 }
 
-message.addEventListener('input', () => {
-  counter.textContent = `${[...message.value].length} / 80`;
-});
+const allowLowercase = document.getElementById('allowLowercase');
+function updateMessageCase() {
+  message.style.textTransform = allowLowercase.checked ? 'none' : 'uppercase';
+  message.setAttribute('autocapitalize', allowLowercase.checked ? 'none' : 'characters');
+  const text = allowLowercase.checked ? message.value : message.value.toLocaleUpperCase('fr-FR');
+  counter.textContent = `${[...text].length} / 80`;
+  message.setCustomValidity([...text].length > 80 ? 'Maximum 80 caractères après conversion en majuscules.' : '');
+}
+message.addEventListener('input', updateMessageCase);
+allowLowercase.addEventListener('change', updateMessageCase);
+updateMessageCase();
 
-form.addEventListener('submit', async event => {
-  event.preventDefault();
-  button.disabled = true;
+async function submitCreation(endpoint, payload) {
+  if (sending || cooldownTimer) return;
+  sending = true;
+  setSubmissionDisabled(true);
   status.className = '';
   status.textContent = 'Envoi…';
   try {
-    const response = await fetch('/api/public/message', {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text: message.value,
-        color: document.getElementById('color').value,
-        rainbow: document.getElementById('rainbow').checked,
+        ...payload,
         clientId,
       }),
     });
@@ -165,10 +179,12 @@ form.addEventListener('submit', async event => {
     }
     status.className = 'ok';
     status.textContent = result.status === 'pending'
-      ? 'Message envoyé à la modération.'
+      ? 'Envoi reçu par l’équipe pour validation.'
       : 'Message ajouté à la file !';
-    message.value = '';
-    counter.textContent = '0 / 80';
+    if (endpoint === '/api/public/message') {
+      message.value = '';
+      counter.textContent = '0 / 80';
+    }
     renderMessageStatus(result);
     trackReceipt(result);
   } catch (error) {
@@ -177,9 +193,22 @@ form.addEventListener('submit', async event => {
       status.textContent = error.message || 'Le panneau ne répond pas.';
     }
   } finally {
-    if (!cooldownTimer) button.disabled = false;
+    sending = false;
+    if (!cooldownTimer) setSubmissionDisabled(false);
   }
+}
+
+form.addEventListener('submit', event => {
+  event.preventDefault();
+  submitCreation('/api/public/message', {
+    text: message.value,
+    allowLowercase: allowLowercase.checked,
+    color: document.getElementById('color').value,
+    rainbow: document.getElementById('rainbow').checked,
+  });
 });
+
+window.addEventListener('public-gif-submit', event => submitCreation('/api/public/gif', event.detail));
 
 loadPublicConfig();
 try {

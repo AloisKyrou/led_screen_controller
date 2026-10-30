@@ -204,6 +204,33 @@
   @media (max-width: 680px) {
     .public-message-grid { grid-template-columns: 1fr; }
   }
+  .public-gif-note { color: #aaa; font-size: 12px; line-height: 1.5; margin: 12px 0; }
+  .public-gif-actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .public-gif-actions a { color: #ffb44b; font-size: 12px; }
+  #audioSettings .public-gif-actions { gap: 12px; margin-bottom: 14px; }
+  #audioSettings label { display: inline-flex; gap: 7px; align-items: center; flex-wrap: wrap; color: #ccc; font-size: 13px; }
+  #audioSettings input:not([type=checkbox]), #audioSettings select { padding: 7px; border: 1px solid #444; border-radius: 6px; background: #0b0b0b; color: #eee; max-width: 100%; }
+  #audioSettings input[type=checkbox] { accent-color: #f90; }
+  #audioSettings [hidden] { display: none !important; }
+  #audioStatus, #audioSaveStatus { font-size: 13px; margin: 10px 0 0; color: #ccc; overflow-wrap: anywhere; }
+  .audio-detection { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+  #audioBeatLamp { display: inline-flex; align-items: center; gap: 9px; padding: 9px 12px; border: 1px solid #49412a; border-radius: 8px; color: #c8b987; font-size: 12px; font-weight: 800; }
+  #audioBeatLamp::before { content: ''; width: 11px; height: 11px; border-radius: 50%; background: #514426; }
+  #audioBeatLamp.detected { color: #ffe7aa; border-color: #ffa600; background: #503000; }
+  #audioBeatLamp.detected::before { background: #ffc248; box-shadow: 0 0 14px #ff9600; }
+  #audioDetectionInfo { color: #aaa; font-size: 12px; }
+  #audioBassMeter { width: 110px; height: 14px; }
+  .audio-kick-space { margin: 16px 0; padding: 14px; border: 1px solid #55452a; border-radius: 8px; min-width: 0; }
+  .audio-kick-space legend { color: #ffb44b; font-weight: bold; padding: 0 6px; }
+  #audioKickPreview { height: 38px; max-width: 300px; border: 1px solid #777; border-radius: 5px; margin-top: 12px; }
+  #audioKickDescription { font-size: 12px; color: #ccc; }
+  #publicGifDialog { width: min(720px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; margin: auto; padding: 24px; border: 1px solid #634521; border-radius: 14px; background: #151515; color: #eee; }
+  #publicGifDialog::backdrop { background: #000b; }
+  #publicGifDialog h2 { margin-top: 0; }
+  #publicGifCanvas { display: block; width: 100%; height: auto; aspect-ratio: 4; background: #000; image-rendering: pixelated; margin: 20px 0; }
+  #publicGifDetail { color: #bbb; font-size: 13px; }
+  .public-gif-review-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+  #publicGifFrame { font-size: 12px; color: #bbb; }
 </style>
 </head>
 <body>
@@ -233,42 +260,94 @@
 <main>
 
   <section>
-    <h2>VJ</h2>
-    <div class="vj-row">
-      <button class="kick-btn"
-        onmousedown="pressKick()" onmouseup="releaseKick()"
-        ontouchstart="pressKick()" ontouchend="releaseKick()">⚡<br>KICK</button>
-      <div class="kick-color">
-        <span>Color</span>
-        <input type="color" id="kickColorPicker" value="#ffffff">
-        <button class="rbtn" id="kickRainbowBtn" onclick="toggleKickRainbow()" title="Random color each kick">&#127752;</button>
+    <h2>Audio réactif</h2>
+    <form id="audioSettings" class="public-message-card">
+      <div class="public-gif-actions">
+        <label><input type="checkbox" id="audioEnabled"> Activer l’audio</label>
+        <label>Source <select id="audioSource"><option value="microphone">Microphone du Pi</option><option value="demo">Démo sans micro</option></select></label>
+        <label>Périphérique ALSA <input id="audioDevice" value="default" maxlength="120" style="max-width:180px"></label>
       </div>
-      <div class="kick-color kick-bright">
-        <span>Bright <span id="kickBrightVal">100%</span></span>
-        <input type="range" id="kickBrightSlider" min="0" max="100" value="100"
-          oninput="document.getElementById('kickBrightVal').textContent=this.value+'%'">
+      <div class="public-gif-actions">
+        <label>Gain <input id="audioGain" type="number" min="0.1" max="20" step="0.1" value="2" style="width:65px"></label>
+        <label>Seuil de bruit <input id="audioGate" type="number" min="0.001" max="0.2" step="0.001" value="0.008" style="width:80px"></label>
       </div>
-    </div>
+      <p class="public-gif-note">Le microphone alimente deux usages indépendants : les visuels audio continus et les surcouches déclenchées par les kicks.</p>
+      <div class="audio-detection">
+        <span id="audioBeatLamp">KICK DÉTECTÉ</span>
+        <meter id="audioBassMeter" min="0" max="3" value="0" aria-label="Niveau des basses par rapport au seuil de kick"></meter>
+        <span id="audioDetectionInfo">En attente du signal</span>
+      </div>
+      <p class="public-gif-note">Détection sur les basses uniquement : 47–172 Hz, comparées à leur propre moyenne. Le voyant fonctionne même sans flash. Un seuil plus bas accepte des kicks plus faibles, mais peut aussi détecter davantage de bruit.</p>
+      <fieldset class="audio-kick-space">
+        <legend>KICK — bouton et déclenchement audio</legend>
+        <p class="public-gif-note">Une seule configuration pour les deux déclencheurs. Le bouton et les kicks détectés jouent la même surcouche, avec la même opacité et la même durée. Le visuel de fond continue de tourner. « Audio → KICK » active uniquement le déclenchement automatique.</p>
+        <label>Réaction <select id="audioKickVisual"><option value="flash">Flash plein panneau</option><option value="shockwave">Onde de choc</option><option value="brightness">Boost luminosité seul</option></select></label>
+        <div class="public-gif-actions">
+          <label>Attaque (s) <input id="audioKickAttack" type="number" min="0" max="2" step="0.01" value="0"></label>
+          <label>Descente (s) <input id="audioKickRelease" type="number" min="0" max="3" step="0.01" value="0.3"></label>
+          <label><input id="audioKickBoost" type="checkbox"> Booster aussi la luminosité globale</label>
+          <label>Cible du boost (%) <input id="audioKickBoostTarget" type="number" min="0" max="100" value="100"></label>
+        </div>
+        <p class="public-gif-note">« Boost luminosité seul » éclaire le visuel courant, sans flash ni onde. Pour un flash ou une onde, « Booster aussi » ajoute ce même éclaircissement du fond : les boosts ne se cumulent pas. En mode boost seul, la couleur et l’opacité de surcouche ne sont pas utilisées.</p>
+        <p class="public-gif-note">Le boost monte depuis la luminosité globale vers la cible puis redescend, sans modifier le réglage global. Attaque et descente s’appliquent aussi au flash ; sa durée ci-dessous est le maintien au sommet. L’onde conserve sa durée de propagation. Un nouveau kick repart du niveau atteint.</p>
+        <div class="public-gif-actions">
+          <label>Seuil du kick <input id="audioSensitivity" type="number" min="0.5" max="4" step="0.1" value="1.8" style="width:65px"></label>
+          <label><input id="audioKickAdaptive" type="checkbox"> Seuil adaptatif</label>
+          <label>Délai minimum (ms) <input id="audioKickInterval" type="number" min="80" max="500" step="10" value="160" style="width:70px"></label>
+          <label><input id="audioKick" type="checkbox"> Audio → KICK</label>
+        </div>
+        <p class="public-gif-note">Seuil adaptatif : suit le niveau et les variations des basses sur environ 2 secondes. Remplace le multiplicateur manuel, tout en gardant le seuil de bruit et le délai minimum. Les visuels Kick flash et Kick choc activent temporairement le déclenchement audio ; la capture audio doit être activée.</p>
+        <div class="public-gif-actions">
+          <label>Opacité de la surcouche <input id="audioKickOpacity" type="range" min="0" max="100" value="100" oninput="document.getElementById('audioKickOpacityValue').textContent=this.value+' %'"> <span id="audioKickOpacityValue">100 %</span></label>
+        </div>
+        <p class="public-gif-note">0 % : fond seul · 50 % : mélange · 100 % : effet complet. S’applique au bouton et à la détection audio.</p>
+        <div class="public-gif-actions">
+          <label>Couleur <input id="audioKickColor" type="color" value="#ffffff"></label>
+          <label><input id="audioKickRainbow" type="checkbox"> Couleur aléatoire à chaque kick</label>
+          <label>Luminosité (%) <input id="audioKickBrightness" type="number" min="0" max="100" value="100" style="width:65px"></label>
+          <label id="audioFlashDurationLabel">Maintien du flash (ms) <input id="audioKickDuration" type="number" min="40" max="300" step="10" value="120" style="width:70px"></label>
+          <label id="audioWaveDurationLabel" hidden>Durée de l’onde (ms) <input id="audioWaveDuration" type="number" min="150" max="1200" step="10" value="500" style="width:70px"></label>
+        </div>
+        <div id="audioKickPreview" aria-label="Couleur de la surcouche configurée"></div>
+        <p id="audioKickDescription">Chargement du rendu…</p>
+        <p id="audioKickSaveStatus" class="public-gif-note" role="status">Les réglages KICK s’appliquent automatiquement.</p>
+        <button class="kick-btn" id="kickButton" type="button" onclick="pressKick()" aria-label="Déclencher KICK">⚡<br>KICK</button>
+        <p class="public-gif-note">Un appui = une réaction. Les réglages KICK s’appliquent automatiquement, y compris aux déclenchements audio. Le bouton attend leur enregistrement avant de déclencher.</p>
+      </fieldset>
+      <button class="btn btn-dark" type="submit">Appliquer</button>
+      <div class="public-gif-actions">
+        <label><input id="audioShowPreview" type="checkbox"> Afficher le retour audio</label>
+        <label id="audioPreviewModeLabel" hidden>Vue <select id="audioPreviewMode"><option value="spectrum">Barres</option><option value="scope">Courbe rétro</option></select></label>
+      </div>
+      <canvas id="audioMeter" width="300" height="60" style="width:100%;max-width:450px;height:90px;background:#080808;image-rendering:pixelated" aria-label="Retour audio en direct" hidden></canvas>
+      <p id="audioStatus" role="status">Audio désactivé</p>
+      <p id="audioSaveStatus" role="status"></p>
+    </form>
+    <h3>Visuels audio réactifs</h3>
+    <p class="public-gif-note">Sensibilité : ×1 = niveau normal, ×2 à ×4 amplifie les petits mouvements. Chaque visuel a son réglage ; les kicks ne sont pas modifiés.</p>
+    <p class="public-gif-note">Ces visuels remplacent le fond courant quand tu les lances. Active-les pour les inclure dans la rotation AUTO. Les surcouches au kick fonctionnent par-dessus ces visuels comme sur les autres effets.</p>
+    <div class="effect-list" id="audioEffectList"></div>
   </section>
 
   <section>
-    <h2>Messages publics</h2>
+    <h2>Messages et GIF publics</h2>
     <div class="public-message-card">
       <div class="public-message-toolbar">
-        <span class="label">Réception</span>
+        <span class="label">Messages texte</span>
         <button class="btn btn-dark message-mode-btn" id="messageModeAutomatic" type="button">AUTO</button>
         <button class="btn btn-dark message-mode-btn" id="messageModeModerated" type="button">MODÉRÉ</button>
         <span class="public-message-summary" id="publicMessageSummary">Chargement…</span>
         <button class="btn play-btn" id="publicMessagePlayNext" type="button">▶ PROCHAIN</button>
       </div>
       <div class="public-message-settings">
-        <label for="publicMessageIpLimit">Messages maximum par IP</label>
+        <label for="publicMessageIpLimit">Envois maximum par IP (texte + GIF)</label>
         <input id="publicMessageIpLimit" type="number" min="1" max="100" step="1" value="3">
         <span class="public-message-limit-window" id="publicMessageLimitWindow">sur 5 minutes</span>
         <button class="btn btn-dark" id="publicMessageSaveLimit" type="button">ENREGISTRER</button>
         <span class="public-message-settings-status" id="publicMessageLimitStatus"></span>
       </div>
       <div class="public-message-playing" id="publicMessagePlaying" hidden></div>
+      <p class="public-gif-note">Les GIF nécessitent toujours une validation. « Aperçu » les lit uniquement dans cette console ; « Télécharger » permet de conserver le fichier.</p>
       <div class="public-message-grid">
         <div class="public-message-column">
           <h3>À valider <span id="publicPendingCount">0</span></h3>
@@ -280,7 +359,7 @@
         </div>
       </div>
       <details class="public-message-history">
-        <summary>Historique récent</summary>
+        <summary>Éléments refusés</summary>
         <div id="publicMessageHistory"></div>
       </details>
     </div>
@@ -358,7 +437,26 @@
 
 </main>
 
+<dialog id="publicGifDialog" aria-labelledby="publicGifTitle">
+  <h2 id="publicGifTitle">Vérifier le GIF</h2>
+  <div id="publicGifDetail" role="status"></div>
+  <canvas id="publicGifCanvas" width="60" height="15" aria-label="Aperçu du GIF sur le panneau"></canvas>
+  <div class="public-gif-review-toolbar">
+    <button class="btn btn-dark" id="publicGifPrevious" type="button" aria-label="Image précédente">← Image</button>
+    <button class="btn btn-dark" id="publicGifToggle" type="button">Pause</button>
+    <button class="btn btn-dark" id="publicGifNext" type="button" aria-label="Image suivante">Image →</button>
+    <span id="publicGifFrame"></span>
+  </div>
+  <p class="public-gif-note">Cet aperçu reste dans la console. Le GIF sera diffusé après validation, à son tour dans la file.</p>
+  <div class="public-gif-review-toolbar">
+    <a class="btn btn-dark" id="publicGifDownload">Télécharger le GIF</a>
+    <button class="btn play-btn" id="publicGifApprove" type="button">Valider</button>
+    <button class="btn btn-red" id="publicGifReject" type="button">Refuser</button>
+    <button class="btn btn-dark" id="publicGifClose" type="button">Fermer</button>
+  </div>
+</dialog>
 <script src="vendor/gifuct.js"></script>
+<script src="/panel-gif.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

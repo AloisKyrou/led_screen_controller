@@ -21,8 +21,9 @@ function loadClip(state, clip) {
 function findClip(shared, mediaId) {
   const entries = shared && shared.mediaLibrary && shared.mediaLibrary.entries;
   if (!Array.isArray(entries) || !entries.length) return null;
-  if (mediaId) return entries.find(clip => clip.id === mediaId) || entries[0];
-  return entries[Math.floor(Math.random() * entries.length)];
+  if (mediaId) return entries.find(clip => clip.id === mediaId) || null;
+  const eligible = entries.filter(clip => clip.enabled !== false);
+  return eligible[Math.floor(Math.random() * eligible.length)] || null;
 }
 
 function init(W, H, config, shared, options) {

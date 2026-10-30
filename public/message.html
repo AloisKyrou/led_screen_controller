@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Un message sur l’écran</title>
+<title>À toi l’écran · Panneau LED</title>
+<link rel="stylesheet" href="/gif-editor.css">
 <style>
   * { box-sizing: border-box; }
   html, body { min-height: 100%; }
@@ -47,34 +48,100 @@
   .tracking.show { display: block; }
   .tracking-title { color: #ffb13b; font-size: 17px; font-weight: 900; }
   .tracking-detail { margin-top: 6px; color: #bbb; line-height: 1.45; }
+  .team-access { margin: 20px 0 -8px; text-align: center; }
+  .team-access a { color: #686868; font-size: 12px; text-decoration: none; }
+  .team-access a:hover, .team-access a:focus { color: #f90; text-decoration: underline; }
 </style>
 </head>
 <body>
 <main>
   <div class="eyebrow">Panneau LED</div>
-  <h1>Écris sur l’écran</h1>
+  <h1>À toi l’écran</h1>
   <p class="intro" id="intro">Ton message sera ajouté à la file et défilera une fois sur le panneau.</p>
 
+  <div class="submission-tabs" aria-label="Type de création">
+    <button type="button" id="textTab" aria-pressed="true" aria-controls="messageForm">Écrire un message</button>
+    <button type="button" id="gifTab" aria-pressed="false" aria-controls="gifEditor">Créer / importer un GIF</button>
+  </div>
   <form id="messageForm">
     <label for="message">Ton message</label>
-    <textarea id="message" maxlength="80" required autocomplete="off" placeholder="Écris quelque chose…"></textarea>
+    <textarea id="message" maxlength="80" required autocomplete="off" autocapitalize="characters" style="text-transform: uppercase" placeholder="Écris quelque chose…"></textarea>
     <div class="under"><span>80 caractères maximum</span><span id="counter">0 / 80</span></div>
+    <label class="option"><input type="checkbox" id="allowLowercase"> Accepter les minuscules</label>
 
     <div class="options">
       <label class="option">Couleur <input type="color" id="color" value="#ffffff"></label>
-      <label class="option"><input type="checkbox" id="rainbow"> Arc-en-ciel</label>
+      <label class="option"><input type="checkbox" id="rainbow" checked> Arc-en-ciel</label>
     </div>
 
     <button type="submit" id="submitButton">Envoyer sur l’écran</button>
-    <div id="status" role="status" aria-live="polite"></div>
   </form>
+
+  <section id="gifEditor" hidden aria-label="Éditeur de GIF">
+    <div class="gif-heading"><h2>Ton petit cinéma en pixels</h2><span class="gif-badge">60 × 15 PIXELS</span></div>
+    <p class="gif-help">Dessine une image, duplique-la et change quelques pixels pour l’animer. Les zones noires restent éteintes sur le panneau.</p>
+    <div class="gif-toolbar">
+      <div class="gif-tools" aria-label="Outils de dessin">
+        <button type="button" data-tool="pencil" aria-pressed="true">Crayon</button>
+        <button type="button" data-tool="eraser" aria-pressed="false">Gomme</button>
+        <button type="button" data-tool="fill" aria-pressed="false">Remplir</button>
+      </div>
+      <label class="gif-color">Couleur <input type="color" id="gifColor" value="#ff8800"></label>
+      <button type="button" id="gifUndo" disabled>Annuler</button>
+      <label class="gif-check"><input type="checkbox" id="gifZoom"> Zoom ×2</label>
+    </div>
+    <div class="gif-swatches" id="gifSwatches" aria-label="Palette de couleurs"></div>
+    <div class="gif-drawing-wrap" id="gifDrawingWrap">
+      <canvas id="gifDrawing" width="720" height="180" tabindex="0" aria-label="Grille de dessin 60 par 15. Flèches pour déplacer le curseur, espace pour dessiner."></canvas>
+    </div>
+    <p class="gif-help gif-keyboard">Souris ou doigt pour dessiner · clavier : flèches et espace · en zoom, fais défiler la zone avec la barre horizontale.</p>
+    <div class="gif-frame-toolbar">
+      <strong id="gifFrameLabel">Image 1 / 1</strong>
+      <button type="button" id="gifAdd">+ Image vide</button>
+      <button type="button" id="gifDuplicate">Dupliquer</button>
+      <button type="button" id="gifDelete" disabled>Supprimer</button>
+    </div>
+    <div class="gif-frames" id="gifFrames" aria-label="Images de l’animation"></div>
+    <div class="gif-playback">
+      <div>
+        <div class="gif-preview-label">APERÇU SUR LE PANNEAU</div>
+        <canvas id="gifPreview" width="60" height="15" aria-label="Aperçu animé sur fond noir"></canvas>
+      </div>
+      <div class="gif-speed">
+        <button type="button" id="gifPlay" aria-pressed="true">Pause</button>
+        <label for="gifFps">Vitesse · <span id="gifFpsValue">8 images/s</span></label>
+        <input type="range" id="gifFps" min="1" max="20" value="8">
+        <span id="gifDuration">0,13 s par boucle</span>
+      </div>
+    </div>
+    <div class="gif-import">
+      <label for="gifFile">Déjà un GIF ? Importe-le ici</label>
+      <input type="file" id="gifFile" accept="image/gif,.gif" aria-describedby="gifLimits">
+      <p id="gifLimits" class="gif-help">60 × 15 pixels exactement · 512 Ko · 120 images · 15 s maximum. Les dimensions ne seront pas modifiées. La transparence sera affichée sur fond noir.</p>
+    </div>
+    <label for="gifName">Nom de ton animation</label>
+    <input type="text" id="gifName" maxlength="60" value="Mon animation" autocomplete="off">
+    <p id="gifEditorStatus" class="gif-help" role="status" aria-live="polite"></p>
+    <div class="gif-send-actions">
+      <button type="button" id="gifDownload">Télécharger mon GIF</button>
+      <button type="button" id="gifSubmit">Envoyer à l’équipe</button>
+    </div>
+    <p class="gif-help">L’équipe regarde chaque GIF avant de l’autoriser sur le panneau.</p>
+  </section>
+  <div id="status" role="status" aria-live="polite"></div>
 
   <div class="tracking" id="tracking" aria-live="polite">
     <div class="tracking-title" id="trackingTitle"></div>
     <div class="tracking-detail" id="trackingDetail"></div>
   </div>
+
+  <div class="team-access">
+    <a href="/admin/" target="_self">Accès équipe</a>
+  </div>
 </main>
 
+<script src="/panel-gif.js"></script>
+<script src="/gif-editor.js"></script>
 <script src="/message.js"></script>
 </body>
 </html>

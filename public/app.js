@@ -39,6 +39,7 @@ async function api(url, method = 'GET', body = null) {
 async function poll() {
   const s = await api('/api/state');
   if (!s) return;
+  if (!audioLatest) renderAudio(s.audio);
 
   // Build or update effect cards
   if (!state || state.effects.length !== s.effects.length) {
@@ -53,14 +54,6 @@ async function poll() {
   document.getElementById('progressFill').style.width = pct + '%';
   document.getElementById('timeLabel').textContent =
     `${Math.floor(s.elapsed)}s / ${Math.round(s.duration)}s`;
-
-  // Kick brightness slider
-  const kbs = document.getElementById('kickBrightSlider');
-  if (document.activeElement !== kbs) {
-    const pct = Math.round((s.kickFlashBrightness ?? 1) * 100);
-    kbs.value = pct;
-    document.getElementById('kickBrightVal').textContent = pct + '%';
-  }
 
   // Master brightness slider — only sync if not being dragged
   const mbSlider = document.getElementById('masterBright');
@@ -92,8 +85,8 @@ async function poll() {
   }
 
   if (s.shared && Array.isArray(s.shared.media)) {
-    const before = mediaEntries.map(item => `${item.id}:${item.name}:${item.frameCount}`).join('|');
-    const after = s.shared.media.map(item => `${item.id}:${item.name}:${item.frameCount}`).join('|');
+    const before = mediaEntries.map(item => `${item.id}:${item.name}:${item.frameCount}:${item.enabled}`).join('|');
+    const after = s.shared.media.map(item => `${item.id}:${item.name}:${item.frameCount}:${item.enabled}`).join('|');
     if (before !== after) {
       mediaEntries = s.shared.media;
       renderMediaLibrary();
@@ -125,6 +118,7 @@ async function poll() {
 // ── Effect list ─────────────────────────────────────────────────────────────
 const TEXT_EFFECT_IDS = ['scroll_text', 'static_text', 'public_messages'];
 const MEDIA_EFFECT_IDS = ['media'];
+const AUDIO_EFFECT_IDS = ['audio_spectrum', 'audio_scope', 'audio_mirror', 'audio_pumping_circle', 'audio_kick_only', 'audio_kick_shockwave'];
 
 function makeEffectCard(e) {
   const card = document.createElement('div');
@@ -138,7 +132,11 @@ function makeEffectCard(e) {
     </label>
 
     <div>
-      <div class="effect-name">${e.name}</div>
+      <div class="effect-name">${e.id === 'audio_kick_only' ? 'Kick flash' : e.id === 'audio_kick_shockwave' ? 'Kick choc' : e.name}</div>
+      ${!['audio_kick_only', 'audio_kick_shockwave'].includes(e.id) ? `<label class="public-gif-note" title="Bloque flash et onde de choc, mais conserve le boost de luminosité."><input class="disable-kick-toggle" type="checkbox" ${e.disableKick ? 'checked' : ''} onchange="setConfig('${e.id}','disableKick',this.checked)"> Désactiver les surcouches KICK</label>` : ''}
+      ${['audio_kick_only', 'audio_kick_shockwave'].includes(e.id) ? '<div class="public-gif-note">KICK audio actif temporairement pendant ce visuel. Microphone requis. Les réglages habituels reviennent ensuite.</div>' : ''}
+      ${e.id === 'audio_spectrum' ? `<label class="public-gif-note"><input class="spectrum-ball-toggle" type="checkbox" ${e.ball !== false ? 'checked' : ''} onchange="setConfig('${e.id}','ball',this.checked)"> Deux balles rebondissantes</label>` : ''}
+      ${e.id === 'audio_pumping_circle' ? '<div class="public-gif-note">Gauche : basses · centre : médiums · droite : aigus</div>' : ''}
       <div class="effect-meta">
         <div class="srow">
           <span>Freq</span>
@@ -172,10 +170,17 @@ function makeEffectCard(e) {
             oninput="this.nextElementSibling.textContent=this.value;setConfig('${e.id}','speed',+this.value)">
           <span class="val">${e.speed || 30}</span>
         </div>` : ''}
+        ${e.reactivity !== undefined ? `
+        <div class="srow">
+          <span title="Amplification de ce visuel uniquement, sans changer la détection des kicks">Sensibilité</span>
+          <input class="audio-reactivity" aria-label="Sensibilité ${e.name}" type="range" min="0.5" max="8" step="0.5" value="${e.reactivity}"
+            oninput="this.nextElementSibling.textContent='×'+this.value" onchange="setConfig('${e.id}','reactivity',Number(this.value))">
+          <span class="val">×${e.reactivity}</span>
+        </div>` : ''}
       </div>
     </div>
 
-    <button class="play-btn" onclick="playEffect('${e.id}')">&#9654; Play</button>
+    <button class="play-btn" ${e.available === false ? 'disabled title="Activer l’audio pour lire ce visuel"' : ''} onclick="playEffect('${e.id}')">&#9654; Play</button>
   `;
   return card;
 }
@@ -192,14 +197,27 @@ function buildEffectList(effects) {
          .forEach(e => mediaEffectList.appendChild(makeEffectCard(e)));
 
   const list = document.getElementById('effectList');
+  const audioList = document.getElementById('audioEffectList');
+  audioList.innerHTML = '';
+  effects.filter(e => AUDIO_EFFECT_IDS.includes(e.id)).forEach(e => audioList.appendChild(makeEffectCard(e)));
   list.innerHTML = '';
-  effects.filter(e => !TEXT_EFFECT_IDS.includes(e.id) && !MEDIA_EFFECT_IDS.includes(e.id))
+  effects.filter(e => !TEXT_EFFECT_IDS.includes(e.id) && !MEDIA_EFFECT_IDS.includes(e.id) && !AUDIO_EFFECT_IDS.includes(e.id))
          .forEach(e => list.appendChild(makeEffectCard(e)));
 }
 
 function updateEffectRow(e) {
   const card = document.querySelector(`.effect-card[data-id="${e.id}"]`);
   if (!card) return;
+  card.querySelector('.play-btn').disabled = e.available === false;
+  const reactivity = card.querySelector('.audio-reactivity');
+  const ballToggle = card.querySelector('.spectrum-ball-toggle');
+  const kickToggle = card.querySelector('.disable-kick-toggle');
+  if (kickToggle && document.activeElement !== kickToggle) kickToggle.checked = !!e.disableKick;
+  if (ballToggle && document.activeElement !== ballToggle) ballToggle.checked = e.ball !== false;
+  if (reactivity && document.activeElement !== reactivity) {
+    reactivity.value = e.reactivity;
+    reactivity.nextElementSibling.textContent = `×${e.reactivity}`;
+  }
   const cb = card.querySelector('input[type=checkbox]');
   if (document.activeElement !== cb) cb.checked = e.enabled;
 
@@ -220,33 +238,15 @@ function setGlobalBrightness(pct) {
   document.getElementById('masterBrightVal').textContent = pct + '%';
   api('/api/brightness', 'POST', { value: pct / 100 });
 }
-let kickRainbow = false;
-function toggleKickRainbow() {
-  kickRainbow = !kickRainbow;
-  const btn = document.getElementById('kickRainbowBtn');
-  btn.classList.toggle('on', kickRainbow);
-  document.getElementById('kickColorPicker').classList.toggle('dim', kickRainbow);
+async function pressKick() {
+  const button = document.getElementById('kickButton');
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    if (!document.getElementById('audioSettings').reportValidity()) return;
+    if (await saveAudioSettings()) await api('/api/event', 'POST', { type: 'kick' });
+  } finally { button.disabled = false; }
 }
-function randomHexColor() {
-  const h = Math.random();
-  // HSV full saturation, full value → vivid colors
-  const i = Math.floor(h * 6), f = h * 6 - i;
-  const q = 1 - f, t = f;
-  let r, g, b;
-  switch (i % 6) {
-    case 0: r=1; g=t; b=0; break; case 1: r=q; g=1; b=0; break;
-    case 2: r=0; g=1; b=t; break; case 3: r=0; g=q; b=1; break;
-    case 4: r=t; g=0; b=1; break; default: r=1; g=0; b=q;
-  }
-  return '#' + [r,g,b].map(v => Math.round(v*255).toString(16).padStart(2,'0')).join('');
-}
-function pressKick() {
-  const color = kickRainbow ? randomHexColor() : document.getElementById('kickColorPicker').value;
-  const brightness = document.getElementById('kickBrightSlider').value / 100;
-  if (kickRainbow) document.getElementById('kickColorPicker').value = color;
-  api('/api/event', 'POST', { type: 'kick', on: true, color, brightness });
-}
-function releaseKick() { api('/api/event', 'POST', { type: 'kick', on: false }); }
 function toggleRainbow(id) {
   const eff = state && state.effects && state.effects.find(e => e.id === id);
   const newVal = eff ? !eff.rainbow : false;
@@ -254,6 +254,223 @@ function toggleRainbow(id) {
 }
 
 // ── Pool management ─────────────────────────────────────────────────────────
+let audioSettingsLoaded = false;
+let audioLatest = null, audioLastBeat = null, audioPulseUntil = 0;
+function renderAudio(audio) {
+  if (!audio) return;
+  audioLatest = audio;
+  if (audioLastBeat !== null && audio.lastBeat && audio.lastBeat !== audioLastBeat) audioPulseUntil = performance.now() + 180;
+  audioLastBeat = audio.lastBeat;
+  if (!['listening', 'demo'].includes(audio.status)) audioPulseUntil = 0;
+  if (!audioSettingsLoaded) {
+    const settings = audio.settings;
+    document.getElementById('audioEnabled').checked = settings.enabled;
+    document.getElementById('audioKick').checked = settings.kickEnabled;
+    document.getElementById('audioKickAdaptive').checked = settings.kickAdaptive;
+    document.getElementById('audioKickAttack').value = settings.kickAttackMs / 1000;
+    document.getElementById('audioKickRelease').value = settings.kickReleaseMs / 1000;
+    document.getElementById('audioKickBoost').checked = settings.kickBoostEnabled;
+    document.getElementById('audioKickBoostTarget').value = settings.kickBoostTarget * 100;
+    document.getElementById('audioKickRainbow').checked = settings.kickRainbow;
+    document.getElementById('audioKickColor').value = settings.kickColor;
+    document.getElementById('audioKickBrightness').value = settings.kickBrightness * 100;
+    document.getElementById('audioKickDuration').value = settings.kickDurationMs;
+    document.getElementById('audioKickInterval').value = settings.kickIntervalMs;
+    document.getElementById('audioKickOpacity').value = Math.round(settings.kickOpacity * 100);
+    document.getElementById('audioKickOpacityValue').textContent = `${Math.round(settings.kickOpacity * 100)} %`;
+    document.getElementById('audioKickVisual').value = settings.kickVisual;
+    document.getElementById('audioWaveDuration').value = settings.waveDurationMs;
+    toggleAudioKickFields();
+    for (const [id, key] of [['audioSource', 'source'], ['audioDevice', 'device'], ['audioGain', 'gain'], ['audioGate', 'noiseGate'], ['audioSensitivity', 'sensitivity']]) {
+      document.getElementById(id).value = settings[key];
+    }
+    audioSettingsLoaded = true;
+  }
+  const labels = { disabled: 'Audio désactivé', starting: 'Connexion au microphone…', listening: 'Microphone actif', demo: 'Démo — son simulé', error: 'Microphone indisponible' };
+  document.getElementById('audioStatus').textContent = `${labels[audio.status] || audio.status}${audio.error ? ' : ' + audio.error : ''}${audio.clipping ? ' · Saturation : réduire le gain du micro' : ''}`;
+  const detection = audio.detection;
+  document.getElementById('audioSensitivity').title = detection?.adaptive ? `Seuil automatique actuel : ${detection.threshold.toFixed(4)}` : 'Multiplicateur manuel';
+  const appearance = audio.kickAppearance;
+  if (appearance) {
+    const preview = document.getElementById('audioKickPreview');
+    preview.style.background = appearance.rainbow ? 'linear-gradient(90deg,#f40,#fc0,#3f0,#0fc,#08f,#c0f)' : appearance.color;
+    preview.style.filter = `brightness(${appearance.blackout ? 0 : appearance.brightness * appearance.masterBrightness})`;
+    preview.style.opacity = appearance.opacity;
+    const dark = appearance.blackout || appearance.masterBrightness === 0 || appearance.brightness === 0 || (!appearance.rainbow && appearance.color.toLowerCase() === '#000000');
+    document.getElementById('audioKickDescription').textContent = appearance.visual === 'brightness'
+      ? `Boost ${Math.round(appearance.masterBrightness * 100)} % vers ${Math.round(Math.max(appearance.masterBrightness, appearance.boostTarget) * 100)} % / ${appearance.attackMs} ms + ${appearance.releaseMs} ms`
+      : appearance.opacity === 0
+      ? 'Opacité 0 % : surcouche invisible, le fond reste affiché.'
+      : dark
+      ? 'Rendu noir : vérifier la couleur, les luminosités KICK / master et le blackout.'
+      : `${appearance.visual === 'shockwave' ? 'Onde de choc superposée' : 'Flash plein panneau'} · ${appearance.rainbow ? 'couleur aléatoire' : appearance.color} · luminosité ${Math.round(appearance.brightness * 100)} % · opacité ${Math.round(appearance.opacity * 100)} % · ${appearance.durationMs} ms${appearance.temporaryOverride ? ' / KICK temporairement actif pour ce visuel' : audio.settings.kickEnabled ? '' : ' · déclenchement audio désactivé'}`;
+  }
+  document.getElementById('audioBassMeter').value = detection ? Math.min(3, detection.ratio) : 0;
+  document.getElementById('audioDetectionInfo').textContent = detection
+    ? `${!detection.ready ? 'Calibration…' : !detection.audible ? 'Sous le seuil de bruit' : `Basses : ${detection.ratio.toFixed(1)}× le seuil · ${detection.cooldownMs > 0 ? 'délai minimum' : !detection.armed ? 'attente de la retombée' : !detection.attack ? 'attente d’une attaque' : 'attaque'}`} · ${audio.beatCount} kicks détectés`
+    : 'En attente du signal';
+  if (detection?.adaptive) document.getElementById('audioDetectionInfo').textContent += ` · seuil adaptatif ${detection.threshold.toFixed(3)}`;
+}
+function toggleAudioKickFields() {
+  document.getElementById('audioSensitivity').disabled = document.getElementById('audioKickAdaptive').checked;
+  const boostOnly = document.getElementById('audioKickVisual').value === 'brightness';
+  document.getElementById('audioKickBoost').closest('label').hidden = boostOnly;
+  for (const id of ['audioKickOpacity', 'audioKickColor', 'audioKickRainbow', 'audioKickBrightness']) {
+    document.getElementById(id).disabled = boostOnly;
+  }
+  const wave = document.getElementById('audioKickVisual').value === 'shockwave';
+  document.getElementById('audioFlashDurationLabel').hidden = document.getElementById('audioKickVisual').value !== 'flash';
+  document.getElementById('audioWaveDurationLabel').hidden = !wave;
+  document.getElementById('audioKickColor').disabled = boostOnly || document.getElementById('audioKickRainbow').checked;
+}
+document.getElementById('audioKickRainbow').addEventListener('change', toggleAudioKickFields);
+document.getElementById('audioKickVisual').addEventListener('change', toggleAudioKickFields);
+document.getElementById('audioKickAdaptive').addEventListener('change', toggleAudioKickFields);
+const audioPreview = document.getElementById('audioShowPreview');
+try { audioPreview.checked = localStorage.getItem('audioPreview') === 'true'; } catch {}
+function toggleAudioPreview() {
+  document.getElementById('audioMeter').hidden = !audioPreview.checked;
+  document.getElementById('audioPreviewModeLabel').hidden = !audioPreview.checked;
+  try { localStorage.setItem('audioPreview', String(audioPreview.checked)); } catch {}
+}
+audioPreview.addEventListener('change', toggleAudioPreview);
+toggleAudioPreview();
+
+// Small dedicated request, no overlapping fetches or full admin refresh at this rate.
+async function pollAudio() {
+  if (!document.hidden) {
+    try {
+      const response = await fetch(`/api/audio/state?visual=${audioPreview.checked ? 1 : 0}`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+      if (response.status === 401) return;
+      if (response.ok) renderAudio(await response.json());
+    } catch {
+      audioPulseUntil = 0;
+      audioLatest = null;
+      document.getElementById('audioStatus').textContent = 'Connexion audio interrompue…';
+    }
+  }
+  setTimeout(pollAudio, audioPreview.checked ? 50 : 100);
+}
+pollAudio();
+const audioLevels = Array(15).fill(0), audioPeaks = Array(15).fill(0);
+let audioDrawTime = performance.now();
+function drawAudioMonitor(now) {
+  const dt = Math.min(0.1, Math.max(0, (now - audioDrawTime) / 1000));
+  audioDrawTime = now;
+  document.getElementById('audioBeatLamp').classList.toggle('detected', now < audioPulseUntil);
+  if (!document.hidden && audioPreview.checked) {
+    const ctx = document.getElementById('audioMeter').getContext('2d');
+    if (document.getElementById('audioPreviewMode').value === 'scope') {
+      ctx.fillStyle = `rgba(8,8,8,${1 - Math.exp(-dt * 12)})`;
+      ctx.fillRect(0, 0, 300, 60);
+      const gain = state?.effects?.find(effect => effect.id === 'audio_scope')?.reactivity ?? 2;
+      const samples = audioLatest?.waveform || [];
+      const mean = samples.length ? samples.reduce((sum, value) => sum + value, 0) / samples.length : 0;
+      const wave = samples.map(value => Math.max(-1, Math.min(1, (value - mean) * gain * 4)));
+      if (audioLatest?.detection?.audible && wave.some(value => Math.abs(value) * 6.3 >= 0.5)) {
+        ctx.strokeStyle = '#d9ff65'; ctx.lineWidth = 1.2; ctx.beginPath();
+        wave.forEach((v, i) => { const x = i * 300 / (wave.length - 1), y = 30 - v * 26; if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+        ctx.stroke();
+      }
+    } else {
+      ctx.clearRect(0, 0, 300, 60);
+      const gradient = ctx.createLinearGradient(0, 60, 0, 0);
+      gradient.addColorStop(0, '#13e85b'); gradient.addColorStop(0.55, '#ffb21b'); gradient.addColorStop(1, '#ff3024');
+      for (let i = 0; i < 15; i++) {
+        const gain = state?.effects?.find(effect => effect.id === 'audio_spectrum')?.reactivity ?? 1;
+        const target = Math.min(1, (audioLatest?.bands?.[i] || 0) * gain);
+        audioLevels[i] = Math.max(target, audioLevels[i] - dt * 2.8);
+        audioPeaks[i] = Math.max(audioLevels[i], audioPeaks[i] - dt * 0.65);
+        ctx.fillStyle = gradient;
+        for (let y = 0; y < Math.round(audioLevels[i] * 15); y++) ctx.fillRect(i * 20, 60 - (y + 1) * 4, 16, 3);
+        if (audioPeaks[i] > 0) { ctx.fillStyle = '#edffd1'; ctx.fillRect(i * 20, Math.max(0, 60 - audioPeaks[i] * 60), 16, 1); }
+      }
+    }
+  }
+  requestAnimationFrame(drawAudioMonitor);
+}
+requestAnimationFrame(drawAudioMonitor);
+function readAudioSettings() {
+  return {
+    enabled: document.getElementById('audioEnabled').checked,
+    source: document.getElementById('audioSource').value,
+    device: document.getElementById('audioDevice').value.trim(),
+    gain: Number(document.getElementById('audioGain').value),
+    noiseGate: Number(document.getElementById('audioGate').value),
+    sensitivity: Number(document.getElementById('audioSensitivity').value),
+    kickEnabled: document.getElementById('audioKick').checked,
+    kickAdaptive: document.getElementById('audioKickAdaptive').checked,
+    kickAttackMs: Number(document.getElementById('audioKickAttack').value) * 1000,
+    kickReleaseMs: Number(document.getElementById('audioKickRelease').value) * 1000,
+    kickBoostEnabled: document.getElementById('audioKickBoost').checked,
+    kickBoostTarget: Number(document.getElementById('audioKickBoostTarget').value) / 100,
+    kickRainbow: document.getElementById('audioKickRainbow').checked,
+    kickColor: document.getElementById('audioKickColor').value,
+    kickBrightness: Number(document.getElementById('audioKickBrightness').value) / 100,
+    kickDurationMs: Number(document.getElementById('audioKickDuration').value),
+    kickIntervalMs: Number(document.getElementById('audioKickInterval').value),
+    kickOpacity: Number(document.getElementById('audioKickOpacity').value) / 100,
+    kickVisual: document.getElementById('audioKickVisual').value,
+    waveDurationMs: Number(document.getElementById('audioWaveDuration').value),
+  };
+}
+let audioSaveQueue = Promise.resolve(), kickSaveTimer = null, kickEditRevision = 0;
+function queueAudioSave(patch, revision) {
+  const request = audioSaveQueue.then(() => api('/api/audio/settings', 'POST', patch));
+  audioSaveQueue = request.catch(() => null);
+  return request.then(result => {
+    if (revision === kickEditRevision) document.getElementById('audioKickSaveStatus').textContent = result
+      ? 'Réglages KICK appliqués.' : 'Échec de sauvegarde : les anciens réglages restent actifs. Réessayer avec Appliquer.';
+    return result;
+  });
+}
+async function saveAudioSettings() {
+  clearTimeout(kickSaveTimer);
+  const result = await queueAudioSave(readAudioSettings(), kickEditRevision);
+  document.getElementById('audioSaveStatus').textContent = result ? 'Réglages audio enregistrés.' : 'Impossible d’enregistrer les réglages audio.';
+  return result;
+}
+function saveKickAutomatically() {
+  clearTimeout(kickSaveTimer);
+  const fields = document.querySelectorAll('.audio-kick-space input, .audio-kick-space select');
+  if ([...fields].some(field => !field.checkValidity())) {
+    document.getElementById('audioKickSaveStatus').textContent = 'Valeur invalide : les anciens réglages restent actifs.';
+    return;
+  }
+  const settings = readAudioSettings();
+  const patch = Object.fromEntries(Object.entries(settings).filter(([key]) => key.startsWith('kick') || key === 'sensitivity' || key === 'waveDurationMs'));
+  queueAudioSave(patch, kickEditRevision);
+}
+document.getElementById('audioSettings').addEventListener('submit', async event => {
+  event.preventDefault();
+  await saveAudioSettings();
+});
+document.getElementById('audioSettings').addEventListener('input', event => {
+  if (['audioShowPreview', 'audioPreviewMode'].includes(event.target.id)) return;
+  if (event.target.closest('.audio-kick-space')) {
+    kickEditRevision++;
+    clearTimeout(kickSaveTimer);
+    document.getElementById('audioKickSaveStatus').textContent = 'Application des réglages KICK…';
+    kickSaveTimer = setTimeout(saveKickAutomatically, 150);
+    return;
+  }
+  document.getElementById('audioSaveStatus').textContent = 'Modifications non appliquées : cliquer sur Appliquer ou sur KICK.';
+});
+document.querySelector('.audio-kick-space').addEventListener('change', saveKickAutomatically);
+document.getElementById('audioEnabled').addEventListener('change', async event => {
+  const checkbox = event.target;
+  const enabled = checkbox.checked;
+  checkbox.disabled = true;
+  document.getElementById('audioSaveStatus').textContent = 'Application…';
+  try {
+    const result = await queueAudioSave({ enabled }, -1);
+    if (!result) checkbox.checked = !enabled;
+    document.getElementById('audioSaveStatus').textContent = result
+      ? enabled ? 'Audio activé.' : 'Audio coupé : visuels audio exclus de la lecture.'
+      : 'Impossible d’enregistrer l’activation audio.';
+  } finally { checkbox.disabled = false; }
+});
+
 function publicMessageTime(value) {
   if (!value) return '';
   return new Date(value).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -267,18 +484,62 @@ function publicMessageRow(item, type) {
   const content = document.createElement('div');
   const text = document.createElement('div');
   text.className = 'public-message-text';
-  text.textContent = item.text;
+  text.textContent = item.kind === 'gif' ? `GIF · ${item.text}` : item.text;
   content.appendChild(text);
 
   const meta = document.createElement('div');
   meta.className = 'public-message-meta';
   if (type === 'pending') meta.textContent = `Reçu à ${publicMessageTime(item.createdAt)}`;
+  else if (item.status === 'displayed') meta.textContent = `Joué à ${publicMessageTime(item.displayedAt)}`;
   else if (type === 'queue') meta.textContent = `Position ${item.position}`;
-  else meta.textContent = item.status === 'displayed' ? 'Affiché' : 'Refusé';
+  else meta.textContent = 'Refusé';
   content.appendChild(meta);
+  if (item.kind === 'gif') {
+    const details = document.createElement('div');
+    details.className = 'public-message-meta';
+    details.textContent = `60 × 15 · ${item.gif.frameCount} images · ${(item.gif.durationMs / 1000).toLocaleString('fr-FR')} s`;
+    const actions = document.createElement('div');
+    actions.className = 'public-gif-actions';
+    const preview = document.createElement('button');
+    preview.type = 'button'; preview.className = 'btn btn-dark'; preview.textContent = 'Aperçu';
+    preview.onclick = () => openPublicGif(item);
+    const download = document.createElement('a');
+    download.href = `/api/public-messages/${encodeURIComponent(item.id)}/gif?download=1`;
+    download.textContent = 'Télécharger';
+    actions.append(preview, download);
+    if (['approved', 'playing', 'displayed'].includes(item.status)) {
+      const save = document.createElement('button');
+      save.type = 'button'; save.className = 'btn btn-dark'; save.textContent = 'Enregistrer dans nos GIF';
+      if (item.savedMediaId) { save.textContent = 'Enregistré dans nos GIF'; save.disabled = true; }
+      save.onclick = async () => {
+        save.disabled = true;
+        try {
+          const result = await api(`/api/public-messages/${encodeURIComponent(item.id)}/save-media`, 'POST');
+          if (result && result.ok) save.textContent = 'Enregistré dans nos GIF';
+          else { alert(result && result.error || 'Enregistrement impossible.'); save.disabled = false; }
+        } catch { alert('Connexion interrompue. Réessaie.'); save.disabled = false; }
+      };
+      actions.appendChild(save);
+    }
+    content.append(details, actions);
+  }
   row.appendChild(content);
 
-  if (type === 'pending' || type === 'queue') {
+  if (item.status === 'displayed') {
+    const actions = document.createElement('div');
+    actions.className = 'public-message-actions';
+    const replay = document.createElement('button');
+    replay.type = 'button'; replay.className = 'btn play-btn'; replay.textContent = 'Relancer';
+    replay.title = 'Remettre en fin de file';
+    replay.onclick = () => moderatePublicMessage(item.id, 'replay');
+    const discard = document.createElement('button');
+    discard.type = 'button'; discard.className = 'btn btn-red'; discard.textContent = '✕';
+    discard.title = 'Retirer de la file';
+    discard.setAttribute('aria-label', 'Retirer de la file');
+    discard.onclick = () => moderatePublicMessage(item.id, 'reject');
+    actions.append(replay, discard);
+    row.appendChild(actions);
+  } else if (type === 'pending' || type === 'queue') {
     const actions = document.createElement('div');
     actions.className = 'public-message-actions';
     if (type === 'pending') {
@@ -286,7 +547,7 @@ function publicMessageRow(item, type) {
       approve.className = 'btn play-btn';
       approve.type = 'button';
       approve.textContent = '✓';
-      approve.title = 'Valider ce message';
+      approve.title = item.kind === 'gif' ? 'Valider ce GIF' : 'Valider ce message';
       approve.onclick = () => moderatePublicMessage(item.id, 'approve');
       actions.appendChild(approve);
     }
@@ -325,8 +586,8 @@ function renderPublicMessages(data) {
   document.getElementById('publicPendingCount').textContent = data.pending.length;
   document.getElementById('publicQueueCount').textContent = data.queue.length;
   document.getElementById('publicMessageSummary').textContent = data.mode === 'automatic'
-    ? 'Validation automatique'
-    : 'Validation manuelle';
+    ? 'Texte automatique · GIF à valider'
+    : 'Texte et GIF à valider';
 
   const settings = data.settings || {};
   const limitInput = document.getElementById('publicMessageIpLimit');
@@ -348,8 +609,107 @@ function renderPublicMessages(data) {
   playNext.disabled = !data.queue.length || !!current;
 
   renderPublicMessageList('publicPendingList', data.pending, 'pending', 'Aucun message à valider.');
-  renderPublicMessageList('publicQueueList', data.queue, 'queue', 'La file est vide.');
-  renderPublicMessageList('publicMessageHistory', data.history, 'history', 'Aucun historique.');
+  renderPublicMessageList('publicQueueList', [...data.queue, ...data.history.filter(item => item.status === 'displayed')], 'queue', 'La file est vide.');
+  renderPublicMessageList('publicMessageHistory', data.history.filter(item => item.status === 'rejected'), 'history', 'Aucun élément refusé.');
+  if (publicGifReview.item) {
+    const item = [...data.pending, ...data.queue, ...data.playing, ...data.history].find(value => value.id === publicGifReview.item.id);
+    publicGifReview.item = item || publicGifReview.item;
+    document.getElementById('publicGifApprove').disabled = !item || item.status !== 'pending' || !publicGifReview.clip;
+    document.getElementById('publicGifReject').disabled = !item || !['pending', 'approved'].includes(item.status);
+  }
+}
+
+// Review uses the same decoder and black background as the actual LED output.
+const publicGifReview = { item: null, clip: null, index: 0, playing: true, timer: null, request: 0, started: 0 };
+const publicGifDialog = document.getElementById('publicGifDialog');
+
+function drawPublicGifFrame() {
+  const review = publicGifReview;
+  if (!review.clip) return;
+  const canvas = document.getElementById('publicGifCanvas'), ctx = canvas.getContext('2d');
+  const rgb = review.clip.frames[review.index], rgba = ctx.createImageData(60, 15);
+  for (let i = 0; i < 900; i++) {
+    rgba.data.set(rgb.subarray(i * 3, i * 3 + 3), i * 4); rgba.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(rgba, 0, 0);
+  document.getElementById('publicGifFrame').textContent = `Image ${review.index + 1} / ${review.clip.frames.length} · ${review.clip.durations[review.index]} ms`;
+}
+
+function animatePublicGif(time) {
+  const review = publicGifReview;
+  if (!publicGifDialog.open || !review.clip) return;
+  if (review.playing && !document.hidden) {
+    let elapsed = (time - review.started) % review.clip.totalDurationMs, index = 0;
+    while (index < review.clip.frames.length - 1 && elapsed >= review.clip.durations[index]) elapsed -= review.clip.durations[index++];
+    if (index !== review.index) { review.index = index; drawPublicGifFrame(); }
+  }
+  review.timer = requestAnimationFrame(animatePublicGif);
+}
+
+async function openPublicGif(item) {
+  const review = publicGifReview, request = ++review.request;
+  cancelAnimationFrame(review.timer);
+  Object.assign(review, { item, clip: null, index: 0, playing: true });
+  document.getElementById('publicGifTitle').textContent = `GIF · ${item.text}`;
+  document.getElementById('publicGifDetail').textContent = 'Chargement et vérification…';
+  document.getElementById('publicGifFrame').textContent = '';
+  document.getElementById('publicGifCanvas').getContext('2d').clearRect(0, 0, 60, 15);
+  document.getElementById('publicGifDownload').href = `/api/public-messages/${encodeURIComponent(item.id)}/gif?download=1`;
+  document.getElementById('publicGifApprove').disabled = true;
+  document.getElementById('publicGifReject').disabled = !['pending', 'approved'].includes(item.status);
+  document.getElementById('publicGifToggle').textContent = 'Pause';
+  publicGifDialog.showModal();
+  try {
+    const response = await fetch(`/api/public-messages/${encodeURIComponent(item.id)}/gif`, { cache: 'no-store' });
+    if (!response.ok) throw new Error('GIF indisponible. Vérifie ta connexion à la console.');
+    const bytes = await response.arrayBuffer();
+    if (request !== review.request || !publicGifDialog.open) return;
+    review.clip = PanelGif.decode(bytes);
+    review.started = performance.now();
+    document.getElementById('publicGifDetail').textContent = `60 × 15 pixels · ${review.clip.frames.length} images · ${(review.clip.totalDurationMs / 1000).toLocaleString('fr-FR')} s · fond noir`;
+    document.getElementById('publicGifApprove').disabled = review.item.status !== 'pending';
+    drawPublicGifFrame(); review.timer = requestAnimationFrame(animatePublicGif);
+  } catch (error) {
+    if (request === review.request) document.getElementById('publicGifDetail').textContent = error.message;
+  }
+}
+
+document.getElementById('publicGifClose').onclick = () => publicGifDialog.close();
+publicGifDialog.addEventListener('close', () => {
+  publicGifReview.request++; cancelAnimationFrame(publicGifReview.timer);
+  publicGifReview.clip = null; publicGifReview.item = null;
+});
+document.getElementById('publicGifToggle').onclick = () => {
+  const review = publicGifReview;
+  if (!review.clip) return;
+  review.playing = !review.playing;
+  review.started = performance.now() - review.clip.durations.slice(0, review.index).reduce((a, b) => a + b, 0);
+  document.getElementById('publicGifToggle').textContent = review.playing ? 'Pause' : 'Lire';
+};
+function stepPublicGif(direction) {
+  const review = publicGifReview;
+  if (!review.clip) return;
+  review.playing = false;
+  review.index = (review.index + direction + review.clip.frames.length) % review.clip.frames.length;
+  document.getElementById('publicGifToggle').textContent = 'Lire';
+  drawPublicGifFrame();
+}
+document.getElementById('publicGifPrevious').onclick = () => stepPublicGif(-1);
+document.getElementById('publicGifNext').onclick = () => stepPublicGif(1);
+for (const [id, action] of [['publicGifApprove', 'approve'], ['publicGifReject', 'reject']]) {
+  document.getElementById(id).onclick = async () => {
+    const item = publicGifReview.item;
+    if (!item) return;
+    const button = document.getElementById(id); button.disabled = true;
+    const result = await api(`/api/public-messages/${encodeURIComponent(item.id)}/${action}`, 'POST');
+    if (result) {
+      publicGifDialog.close();
+      renderPublicMessages(result.publicMessages);
+    } else {
+      button.disabled = false;
+      document.getElementById('publicGifDetail').textContent = 'Action impossible. Le fichier ou son état a peut-être changé ; ferme cet aperçu et actualise la liste.';
+    }
+  };
 }
 
 async function setPublicMessageMode(mode) {
@@ -378,6 +738,7 @@ async function savePublicMessageLimit() {
 
 async function moderatePublicMessage(id, action) {
   const result = await api(`/api/public-messages/${encodeURIComponent(id)}/${action}`, 'POST');
+  if (!result) alert('Action impossible. Vérifie que le GIF est disponible et que la file a une place libre.');
   if (result && result.publicMessages) renderPublicMessages(result.publicMessages);
 }
 
@@ -820,6 +1181,21 @@ function renderMediaLibrary() {
     meta.className = 'media-entry-meta';
     meta.textContent = media.animated ? `${media.frameCount} frames` : 'image';
     row.appendChild(meta);
+
+    const selection = document.createElement('label');
+    const enabled = document.createElement('input');
+    enabled.type = 'checkbox';
+    enabled.checked = media.enabled !== false;
+    enabled.setAttribute('aria-label', `Autoriser ${media.name} en AUTO`);
+    selection.append(enabled, ' AUTO');
+    selection.title = 'Inclure dans le tirage automatique ; le fichier reste conservé si décoché.';
+    enabled.onchange = async () => {
+      enabled.disabled = true;
+      const result = await api(`/api/media/${encodeURIComponent(media.id)}/enabled`, 'POST', { enabled: enabled.checked });
+      if (result) { mediaEntries = result.library; renderMediaLibrary(); }
+      else { enabled.checked = media.enabled !== false; enabled.disabled = false; setMediaStatus('Sélection non enregistrée.', true); }
+    };
+    row.appendChild(selection);
 
     const play = document.createElement('button');
     play.className = 'pool-play';

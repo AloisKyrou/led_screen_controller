@@ -10,7 +10,9 @@ function init(W, H, config, shared) {
     ? shared.publicMessages.takeNext()
     : null;
   const entry = message || { text: 'NOOLS', color: '#ffffff', rainbow: false };
-  const state = scrollText.init(W, H, config, shared, { entry });
+  const state = message && message.kind === 'gif'
+    ? { W, H, gif: message.animation, elapsedMs: 0, done: false }
+    : scrollText.init(W, H, config, shared, { entry });
   state.publicMessageId = message && message.id;
   state.publicMessageFinished = !message;
   if (!message) state.done = true;
@@ -18,6 +20,17 @@ function init(W, H, config, shared) {
 }
 
 function frame(state, t, dt, config, shared) {
+  if (state.gif) {
+    state.elapsedMs += Math.max(0, dt) * 1000;
+    if (state.elapsedMs >= state.gif.totalDurationMs) state.done = true;
+    let withinLoop = state.elapsedMs % state.gif.totalDurationMs;
+    let index = 0;
+    while (index < state.gif.frames.length - 1 && withinLoop >= state.gif.durations[index]) {
+      withinLoop -= state.gif.durations[index++];
+    }
+    // Brightness is applied by the server in place, so never return the original.
+    return state.gif.frames[index].slice();
+  }
   return scrollText.frame(state, t, dt, config, shared);
 }
 

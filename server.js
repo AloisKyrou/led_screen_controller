@@ -9,6 +9,10 @@ const dgram   = require('dgram');
 const crypto  = require('crypto');
 const express = require('express');
 const { createPublicMessageStore } = require('./lib/public-message-store');
+const { validateUpload, createPublicGifFiles } = require('./lib/public-gifs');
+const PanelGif = require('./public/panel-gif');
+const { createAudioInput, validateSettings: validateAudioSettings } = require('./lib/audio-input');
+const { createKickOverlay, blendKickFlash } = require('./lib/kick-overlay');
 
 // ── Panel geometry ─────────────────────────────────────────────────────────────
 const W                 = 60;
@@ -119,6 +123,15 @@ try { config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch{}
 
 // Per-effect built-in defaults (rainbow/color/freq/duration) — survives effects.json reverts
 const EFFECT_DEFAULTS = {
+  pharmacy_tunnel:     { duration: 20, freq: 2, enabled: false, rainbow: false, color: '#00ff80', speed: 30 },
+  nool_scatter:        { duration: 20, freq: 2, enabled: false, rainbow: true, color: '#00ff80', speed: 30 },
+  nol_chaos:           { duration: 20, freq: 2, enabled: false, rainbow: true, color: '#00ff80', speed: 30 },
+  audio_spectrum:      { duration: 20, freq: 2, enabled: false, reactivity: 1, ball: true },
+  audio_scope:         { duration: 20, freq: 2, enabled: false, reactivity: 2 },
+  audio_mirror:        { duration: 20, freq: 2, enabled: false, reactivity: 1 },
+  audio_kick_only:     { duration: 20, freq: 2, enabled: false },
+  audio_kick_shockwave: { duration: 20, freq: 2, enabled: false },
+  audio_pumping_circle: { duration: 20, freq: 2, enabled: false, reactivity: 1, rainbow: true, color: '#ff0080' },
   nools:               { duration: 15, freq: 1,  rainbow: true,  color: '#ff8800' },
   fete_trouble:        { duration: 15, freq: 1,  rainbow: true,  color: '#c36a04' },
   simple_firework:     { duration: 12, freq: 4,  rainbow: true,  color: '#ff4400' },
@@ -151,7 +164,7 @@ effectsList.forEach(e => {
     : (stored.rarity !== undefined && defaults.freq === undefined) ? { freq: stored.rarity }
     : {};
   config[e.name] = Object.assign(
-    { duration: 10, freq: 3, brightness: 1, enabled: true },
+    { duration: 10, freq: 3, brightness: 1, enabled: true, disableKick: false },
     defaults,
     stored,
     storedFreqOverride
@@ -167,6 +180,7 @@ const TEXT_PATH = path.join(__dirname, 'text.json');
 const MEDIA_PATH = path.join(__dirname, 'media.json');
 const SCENE_PATH = path.join(__dirname, 'scene.json');
 const MESSAGES_PATH = path.join(__dirname, 'messages.json');
+const publicGifFiles = createPublicGifFiles(path.join(__dirname, 'public-gifs'));
 let savedText = {};
 try { savedText = JSON.parse(fs.readFileSync(TEXT_PATH, 'utf8')); } catch {}
 let savedMedia = null;
@@ -193,6 +207,8 @@ function normalizeMediaLibrary(value) {
         version: Number(clip.version) || Date.now(),
         name: path.basename(String(clip.name || 'media')).slice(0, 120),
         frames: clip.frames,
+        enabled: clip.enabled !== false,
+        sourceGifHash: typeof clip.sourceGifHash === 'string' ? clip.sourceGifHash : null,
         durations: Array.isArray(clip.durations) ? clip.durations : [],
       }];
     }),
@@ -208,6 +224,9 @@ const messageStore = createPublicMessageStore(savedMessages, {
 
 function publicMessagesAdminView() {
   const view = messageStore.adminView();
+  for (const item of [...view.pending, ...view.queue, ...view.playing, ...view.history]) {
+    if (item.gif) item.savedMediaId = shared.mediaLibrary.entries.find(clip => clip.sourceGifHash === item.gif.hash)?.id || null;
+  }
   view.settings.rateWindowSeconds = Math.ceil(PUBLIC_RATE_WINDOW_MS / 1000);
   return view;
 }
@@ -219,7 +238,19 @@ const shared = {
   mediaLibrary: normalizeMediaLibrary(savedMedia),
   publicMessages: {
     takeNext() {
-      const item = messageStore.takeNext();
+      let item = messageStore.takeNext();
+      while (item && item.kind === 'gif') {
+        try {
+          item.animation = PanelGif.decode(publicGifFiles.read(item.gif));
+          break;
+        } catch (error) {
+          console.warn(`Public GIF ${item.id} unavailable: ${error.message}`);
+          messageStore.requeue(item.id);
+          messageStore.reject(item.id);
+          saveMessages();
+          item = messageStore.takeNext();
+        }
+      }
       if (item) saveMessages();
       return item;
     },
@@ -251,6 +282,8 @@ function saveMessages() {
     const temporaryPath = `${MESSAGES_PATH}.tmp`;
     fs.writeFileSync(temporaryPath, JSON.stringify(messageStore.snapshot(), null, 2));
     fs.renameSync(temporaryPath, MESSAGES_PATH);
+    try { publicGifFiles.prune(messageStore.snapshot().items); }
+    catch (error) { console.warn(`Could not prune public GIF files: ${error.message}`); }
     return true;
   } catch (error) {
     console.warn(`Could not persist public messages: ${error.message}`);
@@ -287,6 +320,7 @@ function mediaMetadata() {
     name: clip.name,
     frameCount: clip.frames.length,
     animated: clip.frames.length > 1,
+    enabled: clip.enabled !== false,
   }));
 }
 
@@ -300,6 +334,69 @@ let kickFlash        = false;
 let kickFlashEnd     = 0;
 let kickFlashColor      = [255, 255, 255];
 let kickFlashBrightness = 1.0;
+let kickFlashOpacity = 1;
+const { createKickEnvelope } = require('./lib/kick-envelope');
+const flashEnvelope = createKickEnvelope(), boostEnvelope = createKickEnvelope();
+let kickBoostTarget = 1;
+const kickOverlay = createKickOverlay(W, H);
+const { scaleOutput } = require('./lib/output-brightness');
+function kickVisualOverride() {
+  return currentEffect?.name === 'audio_kick_only' ? 'flash'
+    : currentEffect?.name === 'audio_kick_shockwave' ? 'shockwave' : null;
+}
+function kickOverlaysDisabled() {
+  return !kickVisualOverride() && currentEffect && getCfg(currentEffect.name).disableKick === true;
+}
+function audioKickAppearance() {
+  const settings = audioInput.snapshot().settings;
+  const visual = kickVisualOverride() || settings.kickVisual;
+  return { color: settings.kickColor, brightness: settings.kickBrightness, rainbow: settings.kickRainbow,
+    visual, temporaryOverride: !!kickVisualOverride(),
+    attackMs: settings.kickAttackMs, releaseMs: settings.kickReleaseMs,
+    boostEnabled: settings.kickBoostEnabled, boostTarget: settings.kickBoostTarget,
+    opacity: settings.kickOpacity,
+    durationMs: visual === 'shockwave' ? settings.waveDurationMs : settings.kickDurationMs,
+    masterBrightness: globalBrightness, blackout };
+}
+function setKickAppearance(appearance) {
+  const colors = ['#ff4400', '#ffcc00', '#33ff00', '#00ffcc', '#0088ff', '#cc00ff'];
+  kickFlashColor = hexToRgbArray(appearance.rainbow ? colors[crypto.randomInt(colors.length)] : appearance.color);
+  kickFlashBrightness = appearance.brightness;
+  kickFlashOpacity = appearance.opacity ?? 1;
+}
+function triggerAudioKick() {
+  const now = Date.now() / 1000;
+  if (blackout) return;
+  const appearance = audioKickAppearance();
+  setKickAppearance(appearance);
+  if (appearance.boostEnabled || appearance.visual === 'brightness') {
+    kickBoostTarget = appearance.boostTarget;
+    boostEnvelope.trigger(now, appearance.attackMs / 1000, appearance.releaseMs / 1000);
+  }
+  if (appearance.visual === 'brightness' || kickOverlaysDisabled()) return;
+  if (appearance.visual === 'shockwave') {
+    kickOverlay.trigger(now, { color: kickFlashColor, brightness: appearance.brightness, durationMs: appearance.durationMs, opacity: appearance.opacity });
+    return;
+  }
+  kickFlash = true;
+  flashEnvelope.trigger(now, appearance.attackMs / 1000, appearance.releaseMs / 1000, appearance.durationMs / 1000);
+  kickFlashEnd = now + (appearance.attackMs + appearance.durationMs + appearance.releaseMs) / 1000;
+}
+
+const AUDIO_PATH = path.join(__dirname, 'audio.json');
+let savedAudio = {};
+try { savedAudio = JSON.parse(fs.readFileSync(AUDIO_PATH, 'utf8')); } catch {}
+// Migrate the previously effective audio appearance, preserving custom colours.
+if (savedAudio.kickUnified !== true && savedAudio.kickUsePanel !== false) {
+  savedAudio.kickColor = /^#[a-f0-9]{6}$/i.test(config._kick?.color) ? config._kick.color : '#ffffff';
+  savedAudio.kickBrightness = Number.isFinite(config._kick?.brightness) ? Math.max(0, Math.min(1, config._kick.brightness)) : 1;
+  savedAudio.kickRainbow = config._kick?.rainbow === true;
+}
+savedAudio.kickUnified = true;
+const audioInput = createAudioInput(savedAudio, triggerAudioKick, { shouldTrigger: () => !!kickVisualOverride() });
+shared.audio = audioInput;
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { audioInput.stop(); process.exit(0); });
+process.once('exit', () => audioInput.stop());
 
 function hexToRgbArray(hex) {
   hex = (hex || '#ffffff').replace(/^#/, '');
@@ -386,16 +483,21 @@ function playingScene() {
   return sceneLibrary.scenes.find(item => item.id === scenePlayback.sceneId) || null;
 }
 
+function effectAvailable(effect) {
+  return !effect.name.startsWith('audio_') || audioInput.snapshot().settings.enabled;
+}
 function enabledEffects() {
   return effectsList.filter(effect =>
+    effectAvailable(effect) &&
     getCfg(effect.name).enabled &&
-    (effect.name !== 'public_messages' || messageStore.hasApproved())
+    (effect.name !== 'public_messages' || messageStore.hasApproved()) &&
+    (effect.name !== 'media' || shared.mediaLibrary.entries.some(clip => clip.enabled !== false))
   );
 }
 
 function pickNextEffect() {
   const pool = enabledEffects();
-  if (!pool.length) return effectsList[0] || null;
+  if (!pool.length) return effectsList.find(effect => effectAvailable(effect) && !['media', 'public_messages'].includes(effect.name)) || null;
   const total = pool.reduce((s, e) => s + getCfg(e.name).freq, 0);
   let rand = Math.random() * total;
   for (const e of pool) {
@@ -407,6 +509,10 @@ function pickNextEffect() {
 
 function switchTo(effect, options) {
   if (!effect) return;
+  if (!effectAvailable(effect)) { effect = pickNextEffect(); options = undefined; }
+  if (kickVisualOverride() || ['audio_kick_only', 'audio_kick_shockwave'].includes(effect.name)) {
+    kickFlash = false; kickOverlay.clear(); flashEnvelope.clear(); boostEnvelope.clear();
+  }
   if (currentEffect && currentState && typeof currentEffect.stop === 'function') {
     try { currentEffect.stop(currentState, shared); }
     catch (error) { console.warn('stop error for ' + currentEffect.name + ': ' + error.message); }
@@ -435,6 +541,14 @@ function leaveSceneMode() {
 function playSceneCue(index) {
   const scene = playingScene() || selectedScene();
   if (!scene.cues.length || index < 0 || index >= scene.cues.length) return false;
+  let checked = 0;
+  while (!effectAvailable(effectMap[scene.cues[index].effectId])) {
+    checked++; index++;
+    if (checked >= scene.cues.length || (index >= scene.cues.length && !scene.loop)) {
+      finishScene(); return false;
+    }
+    index %= scene.cues.length;
+  }
   const cue = scene.cues[index];
   const effect = effectMap[cue.effectId];
   if (!effect) return false;
@@ -510,19 +624,9 @@ setInterval(() => {
 
   // Blackout
   if (blackout) {
+    kickOverlay.clear();
+    boostEnvelope.clear(); flashEnvelope.clear();
     sendFrame(new Uint8Array(H * W * 3));
-    return;
-  }
-
-  // Kick flash override → kickFlashColor × brightness
-  if (kickFlash) {
-    const fb = new Uint8Array(H * W * 3);
-    const kbright = kickFlashBrightness * globalBrightness;
-    const kr = Math.round(kickFlashColor[0] * kbright);
-    const kg = Math.round(kickFlashColor[1] * kbright);
-    const kb = Math.round(kickFlashColor[2] * kbright);
-    for (let i = 0; i < H * W; i++) { fb[i*3] = kr; fb[i*3+1] = kg; fb[i*3+2] = kb; }
-    sendFrame(fb);
     return;
   }
 
@@ -562,11 +666,19 @@ setInterval(() => {
   const activeBrightness = currentConfigOverrides && currentConfigOverrides.brightness !== undefined
     ? currentConfigOverrides.brightness
     : getCfg(currentEffect.name).brightness;
-  const bright = activeBrightness * globalBrightness;
-  if (bright < 1) {
-    for (let i = 0; i < pixelBuf.length; i++) pixelBuf[i] = (pixelBuf[i] * bright) | 0;
-  }
+  const liveBrightness = globalBrightness + Math.max(0, kickBoostTarget - globalBrightness) * boostEnvelope.value(now);
+  const bright = activeBrightness * liveBrightness;
+  pixelBuf = scaleOutput(pixelBuf, bright);
 
+  // Composite after rendering: the underlying animation keeps advancing.
+  if (kickOverlaysDisabled()) {
+    kickFlash = false; flashEnvelope.clear(); kickOverlay.clear();
+  }
+  pixelBuf = kickOverlay.render(pixelBuf, now, liveBrightness);
+  // Both trigger sources blend with the freshly rendered background.
+  if (kickFlash) {
+    blendKickFlash(pixelBuf, kickFlashColor, kickFlashBrightness * liveBrightness, kickFlashOpacity * flashEnvelope.value(now));
+  }
   sendFrame(pixelBuf);
 }, 1000 / FPS);
 
@@ -578,6 +690,11 @@ const rateBuckets = new Map();
 app.disable('x-powered-by');
 app.use(express.json({ limit: MEDIA_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: false, limit: '4kb' }));
+app.use((error, req, res, next) => {
+  if (error.type === 'entity.too.large') return res.status(413).json({ error: 'Envoi trop volumineux. Maximum 512 Ko pour un GIF.' });
+  if (error.type === 'entity.parse.failed') return res.status(400).json({ error: 'Envoi illisible.' });
+  next(error);
+});
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -623,7 +740,7 @@ function requireAdmin(req, res, next) {
   return res.redirect(303, '/admin/login');
 }
 
-function checkRateLimits(rules) {
+function checkRateLimits(rules, consume = true) {
   const now = Date.now();
   const buckets = rules.map(rule => ({
     ...rule,
@@ -643,9 +760,11 @@ function checkRateLimits(rules) {
   if (retryAfterMs > 0) {
     return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(retryAfterMs / 1000)) };
   }
-  for (const bucket of buckets) {
-    bucket.recent.push(now);
-    rateBuckets.set(bucket.key, bucket.recent);
+  if (consume) {
+    for (const bucket of buckets) {
+      bucket.recent.push(now);
+      rateBuckets.set(bucket.key, bucket.recent);
+    }
   }
   if (rateBuckets.size > 500) {
     for (const [bucketKey, timestamps] of rateBuckets) {
@@ -657,17 +776,19 @@ function checkRateLimits(rules) {
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
-function allowRate(key, limit, windowMs) {
-  return checkRateLimits([{ key, limit, windowMs }]).allowed;
+function loginRate(req, consume = false) {
+  // Direct peer IP only: forwarded headers are untrusted without a configured proxy.
+  return checkRateLimits([{ key: `login:${req.ip}`, limit: 5, windowMs: 5 * 60 * 1000 }], consume);
 }
 
-function normalizePublicMessage(value) {
+function normalizePublicMessage(value, allowLowercase = false) {
   if (typeof value !== 'string') return { error: 'Message manquant.' };
-  const text = value
+  let text = value
     .normalize('NFKC')
     .replace(/[\u0000-\u001F\u007F]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  if (!allowLowercase) text = text.toLocaleUpperCase('fr-FR');
   if (!text) return { error: 'Écris un message.' };
   if ([...text].length > PUBLIC_MESSAGE_MAX_LENGTH) {
     return { error: `Maximum ${PUBLIC_MESSAGE_MAX_LENGTH} caractères.` };
@@ -709,6 +830,12 @@ app.get('/message.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path.join(PUBLIC_DIR, 'message.js'));
 });
+for (const asset of ['panel-gif.js', 'gif-editor.js', 'gif-editor.css']) {
+  app.get(`/${asset}`, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.sendFile(path.join(PUBLIC_DIR, asset));
+  });
+}
 
 app.get('/admin/login', (req, res) => {
   if (hasValidAdminSession(req)) return res.redirect(303, '/admin/');
@@ -716,14 +843,25 @@ app.get('/admin/login', (req, res) => {
   return res.sendFile(path.join(PUBLIC_DIR, 'login.html'));
 });
 
+app.get('/admin/login/status', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const rate = loginRate(req);
+  return res.json({ blocked: !rate.allowed, retryAfterSeconds: rate.retryAfterSeconds });
+});
+
 app.post('/admin/login', (req, res) => {
-  const key = `login:${req.ip}`;
-  if (!allowRate(key, 5, 5 * 60 * 1000)) {
+  const rate = loginRate(req);
+  if (!rate.allowed) {
+    res.setHeader('Retry-After', String(rate.retryAfterSeconds));
     return res.redirect(303, '/admin/login?error=rate');
   }
   const usernameOk = safeEqual(req.body.username || '', ADMIN_USERNAME);
   const passwordOk = ADMIN_PASSWORD && safeEqual(req.body.password || '', ADMIN_PASSWORD);
-  if (!usernameOk || !passwordOk) return res.redirect(303, '/admin/login?error=credentials');
+  if (!usernameOk || !passwordOk) {
+    loginRate(req, true);
+    return res.redirect(303, '/admin/login?error=credentials');
+  }
+  rateBuckets.delete(`login:${req.ip}`);
   res.setHeader('Set-Cookie', `led_admin=${encodeURIComponent(createAdminSession())}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${ADMIN_SESSION_SECONDS}`);
   return res.redirect(303, '/admin/');
 });
@@ -755,6 +893,7 @@ app.get('/api/public/messages/config', (req, res) => {
     mode: messageStore.getMode(),
     maxLength: PUBLIC_MESSAGE_MAX_LENGTH,
     cooldownSeconds: Math.ceil(PUBLIC_COOLDOWN_MS / 1000),
+    gif: { ...PanelGif.limits, requiresApproval: true },
   });
 });
 
@@ -765,21 +904,20 @@ app.get('/api/public/messages/:id/status', (req, res) => {
   return res.json(status);
 });
 
-// The only unauthenticated write endpoint. It never interrupts the current visual.
-app.post('/api/public/message', (req, res) => {
-  const normalized = normalizePublicMessage(req.body && req.body.text);
-  if (normalized.error) return res.status(400).json({ error: normalized.error });
-
+// Both public submission types share the same rate limits and FIFO capacity.
+function publicSubmissionLimits(req, res) {
   const clientHash = publicClientHash(req);
   const ipHash = publicIpHash(req);
   const maxMessagesPerIp = messageStore.getSettings().maxMessagesPerIp;
   if (messageStore.countActiveForIp(ipHash) >= maxMessagesPerIp) {
-    return res.status(429).json({
-      error: `Cette connexion a déjà ${maxMessagesPerIp} message${maxMessagesPerIp > 1 ? 's' : ''} en attente. Attends leur passage.`,
+    res.status(429).json({
+      error: `Cette connexion a déjà ${maxMessagesPerIp} envoi${maxMessagesPerIp > 1 ? 's' : ''} en attente. Attends leur passage.`,
     });
+    return null;
   }
-  if (messageStore.isRecentDuplicate(normalized.text, clientHash, PUBLIC_DUPLICATE_WINDOW_MS)) {
-    return res.status(409).json({ error: 'Ce message a déjà été envoyé récemment.' });
+  if (messageStore.counts().active >= PUBLIC_MESSAGE_MAX_ACTIVE) {
+    res.status(429).json({ error: 'La file est pleine. Réessaie un peu plus tard.' });
+    return null;
   }
 
   const rate = checkRateLimits([
@@ -789,18 +927,30 @@ app.post('/api/public/message', (req, res) => {
   ]);
   if (!rate.allowed) {
     res.setHeader('Retry-After', String(rate.retryAfterSeconds));
-    return res.status(429).json({
-      error: `Trop de messages. Réessaie dans ${rate.retryAfterSeconds} seconde${rate.retryAfterSeconds > 1 ? 's' : ''}.`,
+    res.status(429).json({
+      error: `Trop d’envois. Réessaie dans ${rate.retryAfterSeconds} seconde${rate.retryAfterSeconds > 1 ? 's' : ''}.`,
       retryAfterSeconds: rate.retryAfterSeconds,
     });
+    return null;
   }
+  return { clientHash, ipHash };
+}
+
+// Public submissions never interrupt the current visual.
+app.post('/api/public/message', (req, res) => {
+  const normalized = normalizePublicMessage(req.body && req.body.text, req.body?.allowLowercase === true);
+  if (normalized.error) return res.status(400).json({ error: normalized.error });
+  if (messageStore.isRecentDuplicate(normalized.text, publicClientHash(req), PUBLIC_DUPLICATE_WINDOW_MS)) {
+    return res.status(409).json({ error: 'Ce message a déjà été envoyé récemment.' });
+  }
+  const identity = publicSubmissionLimits(req, res);
+  if (!identity) return;
 
   const item = messageStore.submit({
     text: normalized.text,
     color: req.body && req.body.color,
     rainbow: !!(req.body && req.body.rainbow),
-    clientHash,
-    ipHash,
+    ...identity,
   });
   if (!item) {
     return res.status(429).json({ error: 'La file est pleine. Réessaie un peu plus tard.' });
@@ -809,8 +959,88 @@ app.post('/api/public/message', (req, res) => {
   return res.status(201).json(publicSubmissionResponse(item));
 });
 
+app.post('/api/public/gif', (req, res) => {
+  const identity = publicSubmissionLimits(req, res);
+  if (!identity) return;
+  let upload;
+  try { upload = validateUpload(req.body && req.body.gif); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  if (messageStore.isRecentGifDuplicate(upload.metadata.hash, identity.clientHash, PUBLIC_DUPLICATE_WINDOW_MS)) {
+    return res.status(409).json({ error: 'Ce GIF a déjà été envoyé récemment.' });
+  }
+  try { publicGifFiles.save(upload); }
+  catch (error) {
+    console.warn(`Could not save public GIF: ${error.message}`);
+    return res.status(503).json({ error: 'Impossible de conserver le GIF. Réessaie plus tard.' });
+  }
+  const name = typeof req.body.name === 'string' ? req.body.name : 'Mon animation';
+  const text = name.normalize('NFKC').replace(/[\u0000-\u001f\u007f/\\]/g, ' ').trim().slice(0, 80) || 'Mon animation';
+  const item = messageStore.submit({ text, gif: upload.metadata, ...identity });
+  if (!saveMessages()) {
+    messageStore.remove(item.id);
+    return res.status(503).json({ error: 'Impossible de conserver cet envoi. Réessaie plus tard.' });
+  }
+  return res.status(201).json(publicSubmissionResponse(item));
+});
+
 // Everything below /api/public requires an authenticated admin session.
 app.use('/api', requireAdmin);
+
+app.get('/api/audio/state', (req, res) => {
+  const audio = audioInput.snapshot();
+  audio.kickAppearance = audioKickAppearance();
+  if (req.query.visual === '0') { delete audio.bands; delete audio.waveform; }
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(audio);
+});
+
+app.post('/api/kick/settings', (req, res) => {
+  const patch = {};
+  for (const [oldKey, key] of [['color', 'kickColor'], ['brightness', 'kickBrightness'], ['rainbow', 'kickRainbow']]) {
+    if (req.body?.[oldKey] !== undefined) patch[key] = req.body[oldKey];
+  }
+  return updateAudioSettings(patch, res);
+});
+app.post('/api/audio/kick-test', (req, res) => {
+  triggerAudioKick();
+  res.json({ ok: true, appearance: audioKickAppearance() });
+});
+
+function updateAudioSettings(patch, res) {
+  const previous = audioInput.snapshot().settings;
+  let next;
+  try { next = validateAudioSettings({ ...previous, ...patch }); }
+  catch (error) { return res.status(400).json({ error: error.message }); }
+  try {
+    fs.writeFileSync(`${AUDIO_PATH}.tmp`, JSON.stringify(next, null, 2));
+    fs.renameSync(`${AUDIO_PATH}.tmp`, AUDIO_PATH);
+  } catch { return res.status(500).json({ error: 'Impossible de sauvegarder les réglages audio.' }); }
+  if (JSON.stringify(next) !== JSON.stringify(previous)) {
+    audioInput.configure(next);
+    kickOverlay.clear();
+    boostEnvelope.clear(); flashEnvelope.clear();
+    kickFlash = false;
+  }
+  if (!next.enabled && currentEffect?.name.startsWith('audio_')) {
+    if (scenePlayback.active) advanceScene(1);
+    else { override = false; switchTo(pickNextEffect()); }
+  }
+  return res.json({ ok: true, audio: audioInput.snapshot() });
+}
+app.post('/api/audio/settings', (req, res) => updateAudioSettings(req.body, res));
+
+app.get('/api/public-messages/:id/gif', (req, res) => {
+  const gif = messageStore.getGif(req.params.id);
+  if (!gif) return res.status(404).json({ error: 'GIF introuvable.' });
+  try {
+    const bytes = publicGifFiles.read(gif);
+    res.setHeader('Cache-Control', 'private, no-store');
+    if (req.query.download === '1') res.attachment(`panneau-${gif.hash.slice(0, 12)}.gif`);
+    return res.type('image/gif').send(bytes);
+  } catch {
+    return res.status(404).json({ error: 'Le fichier GIF n’est plus disponible.' });
+  }
+});
 
 // GET /api/state
 app.get('/api/state', (req, res) => {
@@ -827,7 +1057,11 @@ app.get('/api/state', (req, res) => {
     progress: Math.min(1, elapsed / dur),
     blackout,
     globalBrightness,
+    effectiveBrightness: blackout ? 0 : globalBrightness + Math.max(0, kickBoostTarget - globalBrightness) * boostEnvelope.value(Date.now() / 1000),
     kickFlash,
+    kickSettings: audioKickAppearance(),
+    kickFlashOpacity,
+    audio: audioInput.snapshot(),
     kickFlashBrightness,
     kickFlashColor: `#${kickFlashColor.map(v => v.toString(16).padStart(2,'0')).join('')}`,
     scene: selectedScene(),
@@ -850,6 +1084,7 @@ app.get('/api/state', (req, res) => {
       id:   e.name,
       name: e.name.replace(/_/g, ' '),
       ...getCfg(e.name),
+      available: effectAvailable(e),
     })),
   });
 });
@@ -871,6 +1106,11 @@ app.post('/api/public-messages/settings', (req, res) => {
 });
 
 app.post('/api/public-messages/:id/approve', (req, res) => {
+  const gif = messageStore.getGif(req.params.id);
+  if (gif) {
+    try { PanelGif.decode(publicGifFiles.read(gif)); }
+    catch { return res.status(409).json({ error: 'Ce GIF est illisible ou n’est plus disponible.' }); }
+  }
   const item = messageStore.approve(req.params.id);
   if (!item) return res.status(409).json({ error: 'Ce message ne peut pas être validé.' });
   const persisted = saveMessages();
@@ -882,6 +1122,58 @@ app.post('/api/public-messages/:id/reject', (req, res) => {
   if (!item) return res.status(409).json({ error: 'Ce message ne peut pas être retiré.' });
   const persisted = saveMessages();
   return res.json({ ok: true, persisted, publicMessages: publicMessagesAdminView() });
+});
+
+app.post('/api/public-messages/:id/replay', (req, res) => {
+  const gif = messageStore.getGif(req.params.id);
+  if (gif) {
+    try { PanelGif.decode(publicGifFiles.read(gif)); }
+    catch { return res.status(409).json({ error: 'Ce GIF est illisible ou n’est plus disponible.' }); }
+  }
+  if (!messageStore.replay(req.params.id)) {
+    return res.status(409).json({ error: 'Cet élément doit avoir été joué et la file doit avoir une place libre.' });
+  }
+  const persisted = saveMessages();
+  return res.json({ ok: true, persisted, publicMessages: publicMessagesAdminView() });
+});
+
+app.post('/api/public-messages/:id/save-media', (req, res) => {
+  const item = messageStore.getItem(req.params.id);
+  if (!item || item.kind !== 'gif' || !['approved', 'playing', 'displayed'].includes(item.status)) {
+    return res.status(409).json({ error: 'Valide ce GIF avant de l’enregistrer dans la bibliothèque.' });
+  }
+  let clip = shared.mediaLibrary.entries.find(entry => entry.sourceGifHash === item.gif.hash);
+  const existing = !!clip;
+  if (!clip) {
+    if (shared.mediaLibrary.entries.length >= MEDIA_MAX_ENTRIES) {
+      return res.status(409).json({ error: `La bibliothèque est limitée à ${MEDIA_MAX_ENTRIES} médias.` });
+    }
+    let animation;
+    try { animation = PanelGif.decode(publicGifFiles.read(item.gif)); }
+    catch { return res.status(409).json({ error: 'Ce GIF est illisible ou n’est plus disponible.' }); }
+    const frames = [], durations = [];
+    animation.frames.forEach((frame, index) => {
+      const encoded = Buffer.from(frame).toString('base64');
+      // The media player caps each frame at 2 s. Split long holds without
+      // changing the animation timing (at most 127 frames for a public GIF).
+      const parts = Math.ceil(animation.durations[index] / 2000);
+      for (let part = 0; part < parts; part++) {
+        frames.push(encoded);
+        durations.push(animation.durations[index] / parts);
+      }
+    });
+    clip = { id: crypto.randomUUID(), version: Date.now(), name: item.text,
+      sourceGifHash: item.gif.hash, frames, durations };
+    shared.mediaLibrary.entries.push(clip);
+    if (!saveMedia()) {
+      shared.mediaLibrary.entries.pop();
+      return res.status(500).json({ error: 'Impossible d’enregistrer la bibliothèque sur le disque.' });
+    }
+  }
+  getCfg('media').enabled = true;
+  saveConfig();
+  return res.status(existing ? 200 : 201).json({ ok: true, existing,
+    media: mediaMetadata().find(entry => entry.id === clip.id), library: mediaMetadata() });
 });
 
 app.post('/api/public-messages/next', (req, res) => {
@@ -903,8 +1195,18 @@ app.post('/api/public-messages/next', (req, res) => {
 app.post('/api/effects/:id/config', (req, res) => {
   const id = req.params.id;
   if (!effectMap[id]) return res.status(404).json({ error: 'not found' });
-  const { duration, freq, brightness, enabled, color, rainbow, speed } = req.body;
+  const { duration, freq, brightness, enabled, color, rainbow, speed, reactivity, ball, disableKick } = req.body;
+  if (disableKick !== undefined && (typeof disableKick !== 'boolean' || ['audio_kick_only', 'audio_kick_shockwave'].includes(id))) {
+    return res.status(400).json({ error: 'Option KICK invalide pour cet effet.' });
+  }
+  if (ball !== undefined && (id !== 'audio_spectrum' || typeof ball !== 'boolean')) return res.status(400).json({ error: 'Option balle invalide.' });
+  if (reactivity !== undefined && (!Number.isFinite(reactivity) || reactivity < 0.5 || reactivity > 8 || !['audio_scope', 'audio_spectrum', 'audio_mirror', 'audio_pumping_circle'].includes(id))) {
+    return res.status(400).json({ error: 'La sensibilité visuelle doit être comprise entre ×0,5 et ×8.' });
+  }
   const cfg = getCfg(id);
+  if (disableKick !== undefined) cfg.disableKick = disableKick;
+  if (ball !== undefined) cfg.ball = ball;
+  if (reactivity !== undefined) cfg.reactivity = reactivity;
   if (duration   !== undefined) cfg.duration   = Math.max(2, +duration);
   if (freq       !== undefined) cfg.freq       = Math.max(1, +freq);
   if (brightness !== undefined) cfg.brightness = Math.max(0, Math.min(1, +brightness));
@@ -922,6 +1224,7 @@ app.post('/api/effects/:id/play', (req, res) => {
   const id = req.params.id;
   const effect = effectMap[id];
   if (!effect) return res.status(404).json({ error: 'not found' });
+  if (!effectAvailable(effect)) return res.status(409).json({ error: 'Active l’audio pour lancer ce visuel.' });
   if (id === 'public_messages' && !messageStore.hasApproved()) {
     return res.status(409).json({ error: 'Aucun message validé dans la file.' });
   }
@@ -1105,6 +1408,19 @@ app.post('/api/media', (req, res) => {
   });
 });
 
+app.post('/api/media/:id/enabled', (req, res) => {
+  const clip = shared.mediaLibrary.entries.find(item => item.id === req.params.id);
+  if (!clip) return res.status(404).json({ error: 'Media introuvable.' });
+  if (typeof req.body.enabled !== 'boolean') return res.status(400).json({ error: 'enabled doit etre un booleen.' });
+  const previous = clip.enabled;
+  clip.enabled = req.body.enabled;
+  if (!saveMedia()) {
+    clip.enabled = previous;
+    return res.status(500).json({ error: 'Impossible de sauvegarder la selection.' });
+  }
+  return res.json({ ok: true, library: mediaMetadata() });
+});
+
 app.post('/api/media/:id/play', (req, res) => {
   const clip = shared.mediaLibrary.entries.find(item => item.id === req.params.id);
   const effect = effectMap.media;
@@ -1161,22 +1477,17 @@ app.post('/api/brightness', (req, res) => {
 });
 
 // POST /api/event
-// { type:'kick' }              → 180ms flash (TD compat)
-// { type:'kick', on:true,  color:'#ff0000' } → hold until released
-// { type:'kick', on:false }  → stop immediately
+// Manual and audio triggers use the same saved overlay and duration.
+// { type:'kick', on:false } cancels active overlays for legacy clients.
 app.post('/api/event', (req, res) => {
   const body = req.body || {};
   if (body.type === 'kick') {
-    if (body.color) kickFlashColor = hexToRgbArray(body.color);
-    if (body.brightness !== undefined) kickFlashBrightness = Math.max(0, Math.min(1, +body.brightness));
     if (body.on === false) {
       kickFlash = false;
-    } else if (body.on === true) {
-      kickFlash    = true;
-      kickFlashEnd = Date.now() / 1000 + 30; // held — auto-release safety
+      kickOverlay.clear();
+    boostEnvelope.clear(); flashEnvelope.clear();
     } else {
-      kickFlash    = true;
-      kickFlashEnd = Date.now() / 1000 + 0.18; // 180ms (TD compat)
+      triggerAudioKick();
     }
   }
   res.json({ ok: true });

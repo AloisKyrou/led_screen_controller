@@ -8,6 +8,41 @@ function encoded(values) {
   return Buffer.from(values).toString('base64');
 }
 
+test('AUTO excludes unselected media but explicit playback still works', () => {
+  const shared = { mediaLibrary: { entries: [
+    { id: 'off', enabled: false, version: 1, frames: [encoded([255, 0, 0])] },
+    { id: 'on', enabled: true, version: 2, frames: [encoded([0, 255, 0])] },
+  ] } };
+  for (let i = 0; i < 50; i++) assert.equal(media.init(1, 1, {}, shared).mediaId, 'on');
+  assert.equal(media.init(1, 1, {}, shared, { mediaId: 'off' }).mediaId, 'off');
+  shared.mediaLibrary.entries[1].enabled = false;
+  const state = media.init(1, 1, {}, shared);
+  assert.equal(state.mediaId, null);
+  assert.deepEqual([...media.frame(state, 0, 0, {}, shared)], [0, 0, 0]);
+});
+
+test('media selection is validated, authenticated and survives restart', { timeout: 30000 }, async () => {
+  const { startServer } = require('../test-support/server');
+  let server = await startServer();
+  try {
+    assert.equal((await server.request('/api/media/unknown/enabled', { enabled: false })).status, 401);
+    await server.login();
+    const created = await (await server.request('/api/media', { name: 'selection', frames: [encoded(new Array(2700).fill(10))], durations: [100] }, true)).json();
+    const id = created.media.id;
+    assert.equal(created.media.enabled, true);
+    assert.equal((await server.request(`/api/media/${id}/enabled`, { enabled: 'false' }, true)).status, 400);
+    const off = await (await server.request(`/api/media/${id}/enabled`, { enabled: false }, true)).json();
+    assert.equal(off.library.find(item => item.id === id).enabled, false);
+    const directory = server.directory;
+    await server.stop(false); server = await startServer(directory); await server.login();
+    const state = await (await server.request('/api/state', undefined, true)).json();
+    assert.equal(state.shared.media.find(item => item.id === id).enabled, false);
+    assert.equal((await server.request(`/api/media/${id}/play`, {}, true)).status, 200);
+    const on = await (await server.request(`/api/media/${id}/enabled`, { enabled: true }, true)).json();
+    assert.equal(on.library.find(item => item.id === id).enabled, true);
+  } finally { await server.stop(); }
+});
+
 test('media effect displays a static RGB frame', () => {
   const shared = {
     mediaLibrary: { entries: [

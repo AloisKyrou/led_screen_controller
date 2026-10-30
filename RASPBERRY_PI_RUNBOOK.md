@@ -1,6 +1,6 @@
 # Raspberry Pi — installation, exploitation et restauration
 
-Dernière mise à jour : **17 septembre 2026**
+Dernière mise à jour : **30 octobre 2026**
 
 Ce document décrit l'installation du contrôleur d'écran LED NOOLS sur la
 Raspberry Pi, son état actuellement validé, les commandes d'exploitation et la
@@ -515,7 +515,87 @@ sudo nft -c -f /etc/nftables.conf
 Ne jamais activer une politique restrictive sans garder l'accès Ethernet de
 secours.
 
-## 9. Mise à jour de l'application avec Git
+## 9. Mise à jour par SCP et SSH (méthode par défaut)
+
+Méthode validée sur le Pi le 30 octobre 2026 : connecter le PC au Wi-Fi
+`NOOLS-HOSTAPD`, puis transférer le code local par SCP et piloter le service
+par SSH. Le Pi n'a pas besoin d'Internet. Conserver le point d'accès Wi-Fi et
+la configuration Ethernet ArtNet ; ne pas basculer vers un hotspot ou un
+routeur pour une mise à jour ordinaire.
+
+### Préparer et transférer depuis le PC
+
+Dans PowerShell, depuis le dépôt local `led_screen_controller` :
+
+```powershell
+$bundle = Join-Path $env:USERPROFILE 'Downloads\led-screen-update.tar.gz'
+tar -czf $bundle server.js public effects lib package.json package-lock.json test test-support README.md .gitignore
+if ($LASTEXITCODE -ne 0) { throw 'Échec de création de l’archive' }
+scp $bundle alois@192.168.50.1:/home/alois/
+```
+
+Cette liste inclut les nouveaux fichiers du code local, même non commités.
+L'adapter si de nouveaux dossiers applicatifs sont ajoutés. Elle exclut
+intentionnellement les réglages `effects.json`, `text.json`, `scene.json`, les
+données `media.json`, `messages.json`, `public-gifs/`, les médias locaux,
+les réglages microphone `audio.json`,
+les secrets, `.git/` et `node_modules/`. Ne pas remplacer ces données du Pi
+par celles du PC.
+
+### Sauvegarder et installer sur le Pi
+
+Ouvrir `ssh alois@192.168.50.1`, puis exécuter :
+
+```bash
+sudo systemctl stop led-screen.service
+
+tar --exclude=node_modules --exclude=.git \
+  -czf "$HOME/led-screen-backup-$(date +%Y%m%d-%H%M%S).tar.gz" \
+  -C /home/alois led-screen-controller &&
+tar -xzf /home/alois/led-screen-update.tar.gz \
+  -C /home/alois/led-screen-controller
+
+sudo systemctl start led-screen.service
+systemctl is-active led-screen.service
+journalctl -u led-screen.service -n 50 --no-pager
+```
+
+La sauvegarde comprend le code et les données, notamment `messages.json` et
+`public-gifs/` ensemble. Si la sauvegarde échoue, le remplacement n'est pas
+exécuté. En cas d'erreur d'extraction, vérifier/restaurer avant de poursuivre
+les essais. Le service doit être `active` après redémarrage.
+
+Tester avec un rafraîchissement forcé du navigateur :
+
+- Public : `http://192.168.50.1:3000/message/`.
+- Administration : `http://192.168.50.1:3000/admin/`.
+- Pour les GIF : création/import, prévisualisation, approbation et lecture sur
+  le panneau physique.
+
+L'archive remplace les fichiers présents mais ne supprime pas les anciens :
+traiter explicitement toute suppression ou migration requise par une mise à
+jour. Ce déploiement ne met pas à jour l'historique Git du Pi et ne remplace
+pas les commits/push du dépôt de développement.
+
+### Dépendances et retour arrière
+
+La mise à jour GIF validée ne nécessite aucune nouvelle dépendance : conserver
+les `node_modules` déjà installés. Ne jamais transférer les `node_modules`
+Windows. Si `package.json` ou le lockfile change les dépendances, préparer
+leur installation pour le système et l'architecture Linux ARM du Pi avant
+de remplacer l'application ; l'archive de sources seule ne suffit pas.
+
+Pour restaurer, arrêter `led-screen.service`, extraire la sauvegarde choisie
+avec `tar -xzf /home/alois/led-screen-backup-DATE.tar.gz -C /home/alois`
+(remplacer `DATE` par le nom réel), puis démarrer le service. Cela restaure
+aussi les données à leur état sauvegardé. Les fichiers ajoutés depuis cette
+sauvegarde doivent être examinés séparément, car l'extraction ne les supprime
+pas.
+
+### Alternative : Git, uniquement si le Pi dispose déjà d'Internet
+
+Ce n'est pas la méthode par défaut. Un déploiement SCP peut laisser le dépôt
+du Pi modifié : examiner `git status` et ne pas écraser ces modifications.
 
 Les fichiers JSON peuvent être modifiés par le serveur. Toujours arrêter le
 service et les sauvegarder avant un `git pull`.
@@ -527,6 +607,7 @@ mkdir -p /home/alois/led-state-backups
 tar -czf "/home/alois/led-state-backups/state-$(date +%Y%m%d-%H%M%S).tar.gz" \
   -C /home/alois/led-screen-controller \
   effects.json text.json scene.json media.json messages.json
+# Si public-gifs/ existe, le sauvegarder aussi avec messages.json avant mise à jour.
 
 cd /home/alois/led-screen-controller
 git status --short
@@ -543,6 +624,10 @@ de fichiers JSON modifiés, ne pas les supprimer : conserver la sauvegarde et
 résoudre les fichiers explicitement.
 
 ## 10. Sauvegardes existantes
+
+Pour le microphone USB et l’effet spectre, voir la
+[préparation audio dans le README](README.md#microphone-et-audio-réactif).
+Le déploiement reste celui de la section 9 ; conserver `audio.json` sur le Pi.
 
 Une image complète de la carte SD a été créée avec Win32 Disk Imager :
 

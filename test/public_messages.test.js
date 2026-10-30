@@ -5,6 +5,35 @@ const assert = require('node:assert/strict');
 const { createPublicMessageStore } = require('../lib/public-message-store');
 const publicMessagesEffect = require('../effects/public_messages');
 
+test('a played contribution can be dismissed from the display queue', () => {
+  const store = createPublicMessageStore({});
+  const item = store.submit({ text: 'Terminé' });
+  store.takeNext();
+  assert.equal(store.reject(item.id), null);
+  store.complete(item.id);
+  assert.equal(store.reject(item.id).status, 'rejected');
+  assert.equal(store.replay(item.id), null);
+  const restored = createPublicMessageStore(store.snapshot());
+  assert.equal(restored.adminView().history[0].status, 'rejected');
+});
+
+test('replaying retains the receipt, joins the end of the queue and respects capacity', () => {
+  let time = 1000;
+  const store = createPublicMessageStore({}, { now: () => time++, maxActive: 1 });
+  const first = store.submit({ text: 'Encore' });
+  store.takeNext();
+  store.complete(first.id);
+  const next = store.submit({ text: 'Suivant' });
+  assert.equal(store.replay(first.id), null);
+  store.takeNext();
+  store.complete(next.id);
+  assert.ok(store.replay(first.id));
+  assert.equal(store.replay(first.id), null);
+  assert.equal(store.getPublicStatus(first.id, first.receipt).status, 'approved');
+  const restored = createPublicMessageStore(store.snapshot());
+  assert.equal(restored.takeNext().id, first.id);
+});
+
 test('automatic messages enter the FIFO display queue and expose their position', () => {
   let time = 1000;
   const store = createPublicMessageStore({}, { now: () => time, maxActive: 10 });

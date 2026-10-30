@@ -1,0 +1,46 @@
+[hidden] { display: none !important; }
+main.gif-mode { width: min(100%, 900px); }
+.submission-tabs { display: flex; gap: 8px; margin: 0 0 24px; }
+.submission-tabs button { width: 50%; font-size: 14px; padding: 12px 8px; background: #242424; color: #ccc; }
+.submission-tabs button[aria-pressed=true] { background: #f80; color: #111; }
+#gifEditor h2 { margin: 0; font-size: 20px; }
+.gif-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.gif-badge { font-size: 11px; letter-spacing: 1px; color: #ffb44b; border: 1px solid #684820; padding: 6px 8px; border-radius: 6px; }
+.gif-help { font-size: 13px; color: #aaa; line-height: 1.55; }
+#gifEditor button { width: auto; padding: 9px 12px; font-size: 13px; background: #292929; color: #eee; border: 1px solid #444; border-radius: 8px; }
+#gifEditor button[aria-pressed=true] { color: #ffb44b; border-color: #f90; background: #382712; }
+button:focus-visible, input:focus-visible, canvas:focus-visible { outline: 2px solid #ffb44b; outline-offset: 3px; }
+.gif-toolbar, .gif-tools, .gif-frame-toolbar, .gif-send-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.gif-toolbar { margin: 16px 0 10px; gap: 12px; }
+.gif-color, .gif-check { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; }
+.gif-swatches { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+#gifEditor .gif-swatch { width: 28px; height: 28px; padding: 0; border: 2px solid #666; border-radius: 50%; }
+.gif-drawing-wrap { overflow: auto; border: 1px solid #555; border-radius: 8px; background: #000; }
+#gifDrawing { display: block; width: 100%; height: auto; touch-action: none; cursor: crosshair; image-rendering: pixelated; }
+.gif-drawing-wrap.zoom #gifDrawing { width: 200%; max-width: none; }
+.gif-keyboard { font-size: 11px; color: #888; margin: 7px 0 18px; }
+.gif-frame-toolbar strong { font-size: 13px; margin-right: auto; color: #ffb44b; }
+.gif-frames { display: flex; gap: 8px; overflow-x: auto; padding: 12px 2px; margin-bottom: 8px; }
+#gifEditor .gif-frame { flex: 0 0 104px; padding: 7px; font-size: 11px; }
+.gif-frame canvas { width: 88px; height: 22px; display: block; image-rendering: pixelated; background: #000; margin-bottom: 6px; }
+.gif-playback { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 24px; padding: 18px; background: #080808; border: 1px solid #333; border-radius: 12px; align-items: center; }
+.gif-preview-label { font-size: 10px; color: #888; letter-spacing: 1px; margin-bottom: 10px; }
+#gifPreview { width: 100%; height: auto; aspect-ratio: 4; image-rendering: pixelated; display: block; background: #000; }
+.gif-speed label { font-size: 12px; margin: 12px 0 4px; }
+.gif-speed input { width: 100%; accent-color: #f90; }
+.gif-speed span { font-size: 12px; color: #aaa; }
+.gif-import { border-top: 1px solid #333; margin-top: 24px; padding-top: 20px; }
+#gifFile { max-width: 100%; color: #bbb; font: inherit; font-size: 13px; }
+#gifName { width: 100%; background: #090909; border: 1px solid #444; border-radius: 8px; padding: 10px 12px; color: #fff; font: inherit; }
+#gifEditorStatus { min-height: 20px; }
+#gifEditorStatus.error { color: #ff7979; }
+.gif-send-actions { justify-content: space-between; }
+#gifEditor #gifSubmit { background: #f80; color: #111; border-color: #f80; padding: 14px 18px; font-size: 15px; }
+@media (max-width: 600px) {
+  body { padding: 12px; }
+  main { padding: 22px 14px; }
+  .gif-playback { grid-template-columns: 1fr; gap: 14px; padding: 12px; }
+  .gif-speed { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 12px; }
+  .gif-speed label { margin: 0; }
+  .gif-send-actions > button { flex: 1; }
+}
