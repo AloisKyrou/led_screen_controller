@@ -85,8 +85,8 @@ async function poll() {
   }
 
   if (s.shared && Array.isArray(s.shared.media)) {
-    const before = mediaEntries.map(item => `${item.id}:${item.name}:${item.frameCount}:${item.enabled}`).join('|');
-    const after = s.shared.media.map(item => `${item.id}:${item.name}:${item.frameCount}:${item.enabled}`).join('|');
+    const before = mediaEntries.map(item => `${item.id}:${item.name}:${item.frameCount}:${item.enabled}:${item.forceKickColor}:${item.kickColor}:${item.disableKick}:${item.weight}`).join('|');
+    const after = s.shared.media.map(item => `${item.id}:${item.name}:${item.frameCount}:${item.enabled}:${item.forceKickColor}:${item.kickColor}:${item.disableKick}:${item.weight}`).join('|');
     if (before !== after) {
       mediaEntries = s.shared.media;
       renderMediaLibrary();
@@ -118,7 +118,13 @@ async function poll() {
 // ── Effect list ─────────────────────────────────────────────────────────────
 const TEXT_EFFECT_IDS = ['scroll_text', 'static_text', 'public_messages'];
 const MEDIA_EFFECT_IDS = ['media'];
-const AUDIO_EFFECT_IDS = ['audio_spectrum', 'audio_scope', 'audio_mirror', 'audio_pumping_circle', 'audio_kick_only', 'audio_kick_shockwave'];
+const HALLOWEEN_EFFECT_NAMES = {
+  audio_pumpkin_groove: 'Citrouille — Groove', audio_pumpkin_jump: 'Citrouille — Sursaut',
+  audio_watching_eyes: 'Les yeux dans le noir', audio_elastic_ghosts: 'Fantômes élastiques',
+  audio_spiders: 'Araignées suspendues', audio_bat_swarm: 'Envol de chauves-souris',
+  audio_cauldron: 'Chaudron spectral', audio_monster_mouth: 'La bouche du panneau', audio_skeleton: 'Crâne et mains de squelette',
+};
+const AUDIO_EFFECT_IDS = ['audio_spectrum', 'audio_scope', 'audio_mirror', 'audio_pumping_circle', 'audio_kick_only', 'audio_kick_shockwave', ...Object.keys(HALLOWEEN_EFFECT_NAMES)];
 
 function makeEffectCard(e) {
   const card = document.createElement('div');
@@ -132,15 +138,20 @@ function makeEffectCard(e) {
     </label>
 
     <div>
-      <div class="effect-name">${e.id === 'audio_kick_only' ? 'Kick flash' : e.id === 'audio_kick_shockwave' ? 'Kick choc' : e.name}</div>
+      <div class="effect-name">${HALLOWEEN_EFFECT_NAMES[e.id] || (e.id === 'audio_kick_only' ? 'Kick flash' : e.id === 'audio_kick_shockwave' ? 'Kick choc' : e.name)}</div>
+      <label class="public-gif-note" title="Au kick : Bright monte à 100 %, puis revient à sa valeur. Respecte la luminosité globale. Fonctionne aussi sans surcouches KICK."><input class="effect-kick-bump" type="checkbox" ${e.kickBrightnessBump ? 'checked' : ''} onchange="setConfig('${e.id}','kickBrightnessBump',this.checked)"> Booster Bright au kick</label>
+      <div class="srow">
+        <label class="public-gif-note"><input class="force-kick-color" type="checkbox" ${e.forceKickColor ? 'checked' : ''} onchange="this.closest('.srow').querySelector('.kick-color').disabled=!this.checked;setConfig('${e.id}','forceKickColor',this.checked)"> Forcer la couleur KICK</label>
+        <input class="kick-color" aria-label="Couleur KICK ${e.name}" type="color" value="${e.kickColor || '#ffffff'}" ${e.forceKickColor ? '' : 'disabled'} onchange="setConfig('${e.id}','kickColor',this.value)">
+      </div>
       ${!['audio_kick_only', 'audio_kick_shockwave'].includes(e.id) ? `<label class="public-gif-note" title="Bloque flash et onde de choc, mais conserve le boost de luminosité."><input class="disable-kick-toggle" type="checkbox" ${e.disableKick ? 'checked' : ''} onchange="setConfig('${e.id}','disableKick',this.checked)"> Désactiver les surcouches KICK</label>` : ''}
       ${['audio_kick_only', 'audio_kick_shockwave'].includes(e.id) ? '<div class="public-gif-note">KICK audio actif temporairement pendant ce visuel. Microphone requis. Les réglages habituels reviennent ensuite.</div>' : ''}
       ${e.id === 'audio_spectrum' ? `<label class="public-gif-note"><input class="spectrum-ball-toggle" type="checkbox" ${e.ball !== false ? 'checked' : ''} onchange="setConfig('${e.id}','ball',this.checked)"> Deux balles rebondissantes</label>` : ''}
       ${e.id === 'audio_pumping_circle' ? '<div class="public-gif-note">Gauche : basses · centre : médiums · droite : aigus</div>' : ''}
       <div class="effect-meta">
         <div class="srow">
-          <span>Freq</span>
-          <input type="range" min="1" max="10" value="${e.freq ?? 3}"
+          <span>${e.id === 'media' ? 'Poids catégorie' : 'Freq'}</span>
+          <input type="range" min="1" max="${e.id === 'media' ? 100 : 10}" value="${e.freq ?? 3}"
             oninput="this.nextElementSibling.textContent=this.value;setConfig('${e.id}','freq',+this.value)">
           <span class="val">${e.freq ?? 3}</span>
         </div>
@@ -169,6 +180,13 @@ function makeEffectCard(e) {
           <input type="range" min="5" max="120" value="${e.speed || 30}"
             oninput="this.nextElementSibling.textContent=this.value;setConfig('${e.id}','speed',+this.value)">
           <span class="val">${e.speed || 30}</span>
+        </div>` : ''}
+        ${e.kickSensitivity !== undefined ? `
+        <div class="srow">
+          <span title="Plus élevé = détection de frappes plus faibles, uniquement pendant ce visuel">Sensibilité KICK</span>
+          <input class="kick-sensitivity" aria-label="Sensibilité KICK ${e.name}" type="range" min="0.5" max="8" step="0.5" value="${e.kickSensitivity}"
+            oninput="this.nextElementSibling.textContent='×'+this.value" onchange="setConfig('${e.id}','kickSensitivity',Number(this.value))">
+          <span class="val">×${e.kickSensitivity}</span>
         </div>` : ''}
         ${e.reactivity !== undefined ? `
         <div class="srow">
@@ -210,6 +228,20 @@ function updateEffectRow(e) {
   if (!card) return;
   card.querySelector('.play-btn').disabled = e.available === false;
   const reactivity = card.querySelector('.audio-reactivity');
+  const bumpToggle = card.querySelector('.effect-kick-bump');
+  if (bumpToggle && document.activeElement !== bumpToggle) bumpToggle.checked = !!e.kickBrightnessBump;
+  const forceColor = card.querySelector('.force-kick-color');
+  const kickColor = card.querySelector('.kick-color');
+  if (document.activeElement !== forceColor && document.activeElement !== kickColor) {
+    forceColor.checked = !!e.forceKickColor;
+    kickColor.value = e.kickColor || '#ffffff';
+    kickColor.disabled = !e.forceKickColor;
+  }
+  const kickSensitivity = card.querySelector('.kick-sensitivity');
+  if (kickSensitivity && document.activeElement !== kickSensitivity) {
+    kickSensitivity.value = e.kickSensitivity;
+    kickSensitivity.nextElementSibling.textContent = `×${e.kickSensitivity}`;
+  }
   const ballToggle = card.querySelector('.spectrum-ball-toggle');
   const kickToggle = card.querySelector('.disable-kick-toggle');
   if (kickToggle && document.activeElement !== kickToggle) kickToggle.checked = !!e.disableKick;
@@ -267,6 +299,8 @@ function renderAudio(audio) {
     document.getElementById('audioEnabled').checked = settings.enabled;
     document.getElementById('audioKick').checked = settings.kickEnabled;
     document.getElementById('audioKickAdaptive').checked = settings.kickAdaptive;
+    document.getElementById('audioKickAdaptiveSensitivity').value = settings.kickAdaptiveSensitivity ?? 1;
+    document.getElementById('adaptiveSensitivityValue').textContent = `×${settings.kickAdaptiveSensitivity ?? 1}`;
     document.getElementById('audioKickAttack').value = settings.kickAttackMs / 1000;
     document.getElementById('audioKickRelease').value = settings.kickReleaseMs / 1000;
     document.getElementById('audioKickBoost').checked = settings.kickBoostEnabled;
@@ -310,9 +344,14 @@ function renderAudio(audio) {
     ? `${!detection.ready ? 'Calibration…' : !detection.audible ? 'Sous le seuil de bruit' : `Basses : ${detection.ratio.toFixed(1)}× le seuil · ${detection.cooldownMs > 0 ? 'délai minimum' : !detection.armed ? 'attente de la retombée' : !detection.attack ? 'attente d’une attaque' : 'attaque'}`} · ${audio.beatCount} kicks détectés`
     : 'En attente du signal';
   if (detection?.adaptive) document.getElementById('audioDetectionInfo').textContent += ` · seuil adaptatif ${detection.threshold.toFixed(3)}`;
+  if (detection?.sensitivityMultiplier && detection.sensitivityMultiplier !== 1) document.getElementById('audioDetectionInfo').textContent += ` · sensibilité effective ×${Number(detection.sensitivityMultiplier.toFixed(2))}`;
 }
 function toggleAudioKickFields() {
+  document.getElementById('adaptiveSensitivityLabel').hidden = !document.getElementById('audioKickAdaptive').checked;
   document.getElementById('audioSensitivity').disabled = document.getElementById('audioKickAdaptive').checked;
+  document.getElementById('manualKickHelp').textContent = document.getElementById('audioKickAdaptive').checked
+    ? 'Seuil KICK manuel inactif : le mode adaptatif le remplace. Utilise le curseur Sensibilité adaptative ; la valeur manuelle est conservée.'
+    : 'Seuil KICK manuel : plus haut = détection plus stricte. Plus bas = davantage de kicks détectés.';
   const boostOnly = document.getElementById('audioKickVisual').value === 'brightness';
   document.getElementById('audioKickBoost').closest('label').hidden = boostOnly;
   for (const id of ['audioKickOpacity', 'audioKickColor', 'audioKickRainbow', 'audioKickBrightness']) {
@@ -400,6 +439,7 @@ function readAudioSettings() {
     sensitivity: Number(document.getElementById('audioSensitivity').value),
     kickEnabled: document.getElementById('audioKick').checked,
     kickAdaptive: document.getElementById('audioKickAdaptive').checked,
+    kickAdaptiveSensitivity: Number(document.getElementById('audioKickAdaptiveSensitivity').value),
     kickAttackMs: Number(document.getElementById('audioKickAttack').value) * 1000,
     kickReleaseMs: Number(document.getElementById('audioKickRelease').value) * 1000,
     kickBoostEnabled: document.getElementById('audioKickBoost').checked,
@@ -869,6 +909,20 @@ function refreshSceneEffectOptions(effects) {
   if ([...select.options].some(option => option.value === previousValue)) select.value = previousValue;
 }
 
+function setScenePanelVisible(visible) {
+  document.getElementById('scenePanel').hidden = !visible;
+  const button = document.getElementById('sceneVisibility');
+  button.textContent = visible ? 'Masquer' : 'Afficher';
+  button.setAttribute('aria-expanded', String(visible));
+}
+try { setScenePanelVisible(localStorage.getItem('nools-scenes-visible') === 'true'); }
+catch { setScenePanelVisible(false); }
+document.getElementById('sceneVisibility').addEventListener('click', () => {
+  const visible = document.getElementById('scenePanel').hidden;
+  setScenePanelVisible(visible);
+  try { localStorage.setItem('nools-scenes-visible', String(visible)); } catch {}
+});
+
 function renderSceneSelector() {
   const select = document.getElementById('sceneSelect');
   select.innerHTML = '';
@@ -1196,6 +1250,62 @@ function renderMediaLibrary() {
       else { enabled.checked = media.enabled !== false; enabled.disabled = false; setMediaStatus('Sélection non enregistrée.', true); }
     };
     row.appendChild(selection);
+
+    const weightLabel = document.createElement('label');
+    weightLabel.className = 'srow media-kick-controls';
+    const weightSlider = document.createElement('input');
+    weightSlider.type = 'range'; weightSlider.min = '1'; weightSlider.max = '10'; weightSlider.step = '1';
+    weightSlider.value = media.weight ?? 1; weightSlider.className = 'media-weight';
+    weightSlider.setAttribute('aria-label', `Poids AUTO de ${media.name}`);
+    const weightValue = document.createElement('span'); weightValue.textContent = weightSlider.value;
+    weightSlider.oninput = () => { weightValue.textContent = weightSlider.value; };
+    weightSlider.onchange = async () => {
+      weightSlider.disabled = true;
+      const result = await api(`/api/media/${encodeURIComponent(media.id)}/weight`, 'POST', { weight: Number(weightSlider.value) });
+      if (result) { mediaEntries = result.library; renderMediaLibrary(); }
+      else { weightSlider.value = media.weight ?? 1; weightValue.textContent = weightSlider.value; weightSlider.disabled = false; setMediaStatus('Poids non enregistré.', true); }
+    };
+    weightLabel.title = 'Poids relatif parmi les médias cochés AUTO : 4 = quatre fois plus fréquent que 1.';
+    weightLabel.append('Poids AUTO du GIF ', weightSlider, weightValue); row.appendChild(weightLabel);
+
+    const kickControls = document.createElement('div');
+    kickControls.className = 'srow media-kick-controls';
+    const disableLabel = document.createElement('label');
+    const disableKick = document.createElement('input');
+    disableKick.type = 'checkbox'; disableKick.checked = !!media.disableKick;
+    disableKick.className = 'media-disable-kick';
+    disableKick.setAttribute('aria-label', `Désactiver les surcouches KICK de ${media.name}`);
+    disableLabel.title = 'Bloque flash et onde de choc sur ce média ; le boost de luminosité reste autorisé.';
+    disableLabel.append(disableKick, ' Désactiver les surcouches KICK');
+    disableKick.onchange = async () => {
+      disableKick.disabled = true;
+      const result = await api(`/api/media/${encodeURIComponent(media.id)}/kick-overlay`, 'POST', { disableKick: disableKick.checked });
+      if (result) { mediaEntries = result.library; renderMediaLibrary(); }
+      else { disableKick.checked = !!media.disableKick; disableKick.disabled = false; setMediaStatus('Réglage KICK non enregistré.', true); }
+    };
+    kickControls.appendChild(disableLabel);
+    const forceLabel = document.createElement('label');
+    const forceColor = document.createElement('input');
+    forceColor.type = 'checkbox'; forceColor.checked = !!media.forceKickColor;
+    forceColor.setAttribute('aria-label', `Forcer la couleur KICK de ${media.name}`);
+    forceLabel.append(forceColor, ' Forcer couleur KICK');
+    const kickColor = document.createElement('input');
+    kickColor.type = 'color'; kickColor.value = media.kickColor || '#ffffff';
+    kickColor.disabled = !media.forceKickColor;
+    kickColor.setAttribute('aria-label', `Couleur KICK de ${media.name}`);
+    const saveColor = async () => {
+      const patch = { forceKickColor: forceColor.checked, kickColor: kickColor.value };
+      forceColor.disabled = true; kickColor.disabled = true;
+      const result = await api(`/api/media/${encodeURIComponent(media.id)}/kick-color`, 'POST', patch);
+      if (result) { mediaEntries = result.library; renderMediaLibrary(); }
+      else {
+        forceColor.checked = !!media.forceKickColor; forceColor.disabled = false;
+        kickColor.value = media.kickColor || '#ffffff'; kickColor.disabled = !media.forceKickColor;
+        setMediaStatus('Couleur KICK non enregistrée.', true);
+      }
+    };
+    forceColor.onchange = saveColor; kickColor.onchange = saveColor;
+    kickControls.append(forceLabel, kickColor); row.appendChild(kickControls);
 
     const play = document.createElement('button');
     play.className = 'pool-play';

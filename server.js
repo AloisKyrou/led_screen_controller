@@ -100,6 +100,8 @@ function sendFrame(pixelBuf) {
 // ── Load effects ───────────────────────────────────────────────────────────────
 const EFFECTS_DIR = path.join(__dirname, 'effects');
 const effectsList = []; // ordered array of effect modules
+// Kept on disk for later reuse, excluded from UI, AUTO and scene playback.
+const RETIRED_EFFECTS = new Set(['fete_trouble', 'moving_tile_puzzle', 'fillscreen_snakewise', 'bouncing_balls', 'audio_cauldron', 'audio_monster_mouth', 'audio_watching_eyes']);
 const effectMap   = {}; // id → module
 
 fs.readdirSync(EFFECTS_DIR).sort().forEach(file => {
@@ -123,14 +125,16 @@ try { config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch{}
 
 // Per-effect built-in defaults (rainbow/color/freq/duration) — survives effects.json reverts
 const EFFECT_DEFAULTS = {
+  ...Object.fromEntries(require('./lib/halloween').NAMES.map(name => ['audio_' + name,
+    { duration: 20, freq: 2, enabled: false, reactivity: 1, disableKick: true }])),
   pharmacy_tunnel:     { duration: 20, freq: 2, enabled: false, rainbow: false, color: '#00ff80', speed: 30 },
   nool_scatter:        { duration: 20, freq: 2, enabled: false, rainbow: true, color: '#00ff80', speed: 30 },
   nol_chaos:           { duration: 20, freq: 2, enabled: false, rainbow: true, color: '#00ff80', speed: 30 },
   audio_spectrum:      { duration: 20, freq: 2, enabled: false, reactivity: 1, ball: true },
   audio_scope:         { duration: 20, freq: 2, enabled: false, reactivity: 2 },
   audio_mirror:        { duration: 20, freq: 2, enabled: false, reactivity: 1 },
-  audio_kick_only:     { duration: 20, freq: 2, enabled: false },
-  audio_kick_shockwave: { duration: 20, freq: 2, enabled: false },
+  audio_kick_only:     { duration: 20, freq: 2, enabled: false, kickSensitivity: 2 },
+  audio_kick_shockwave: { duration: 20, freq: 2, enabled: false, kickSensitivity: 2 },
   audio_pumping_circle: { duration: 20, freq: 2, enabled: false, reactivity: 1, rainbow: true, color: '#ff0080' },
   nools:               { duration: 15, freq: 1,  rainbow: true,  color: '#ff8800' },
   fete_trouble:        { duration: 15, freq: 1,  rainbow: true,  color: '#c36a04' },
@@ -164,7 +168,7 @@ effectsList.forEach(e => {
     : (stored.rarity !== undefined && defaults.freq === undefined) ? { freq: stored.rarity }
     : {};
   config[e.name] = Object.assign(
-    { duration: 10, freq: 3, brightness: 1, enabled: true, disableKick: false },
+    { duration: 10, freq: 3, brightness: 1, enabled: true, disableKick: false, kickBrightnessBump: false, forceKickColor: false, kickColor: '#ffffff' },
     defaults,
     stored,
     storedFreqOverride
@@ -208,6 +212,10 @@ function normalizeMediaLibrary(value) {
         name: path.basename(String(clip.name || 'media')).slice(0, 120),
         frames: clip.frames,
         enabled: clip.enabled !== false,
+        forceKickColor: clip.forceKickColor === true,
+        disableKick: clip.disableKick === true,
+        weight: Number.isFinite(clip.weight) ? Math.max(1, Math.min(10, clip.weight)) : 1,
+        kickColor: /^#[a-f0-9]{6}$/i.test(clip.kickColor || '') ? clip.kickColor : '#ffffff',
         sourceGifHash: typeof clip.sourceGifHash === 'string' ? clip.sourceGifHash : null,
         durations: Array.isArray(clip.durations) ? clip.durations : [],
       }];
@@ -321,6 +329,10 @@ function mediaMetadata() {
     frameCount: clip.frames.length,
     animated: clip.frames.length > 1,
     enabled: clip.enabled !== false,
+    forceKickColor: clip.forceKickColor === true,
+    disableKick: clip.disableKick === true,
+    weight: clip.weight ?? 1,
+    kickColor: clip.kickColor || '#ffffff',
   }));
 }
 
@@ -337,6 +349,17 @@ let kickFlashBrightness = 1.0;
 let kickFlashOpacity = 1;
 const { createKickEnvelope } = require('./lib/kick-envelope');
 const flashEnvelope = createKickEnvelope(), boostEnvelope = createKickEnvelope();
+const effectBrightnessEnvelope = createKickEnvelope();
+function effectBumpEnabled() { return !!currentEffect && getCfg(currentEffect.name).kickBrightnessBump === true; }
+function triggerEffectBrightness(now = Date.now() / 1000) {
+  if (blackout || !effectBumpEnabled()) return;
+  const settings = audioInput.snapshot().settings;
+  effectBrightnessEnvelope.trigger(now, settings.kickAttackMs / 1000, settings.kickReleaseMs / 1000);
+}
+function effectiveEffectBrightness(now) {
+  const base = currentConfigOverrides?.brightness ?? (currentEffect ? getCfg(currentEffect.name).brightness : 1);
+  return base + (1 - base) * (effectBumpEnabled() ? effectBrightnessEnvelope.value(now) : 0);
+}
 let kickBoostTarget = 1;
 const kickOverlay = createKickOverlay(W, H);
 const { scaleOutput } = require('./lib/output-brightness');
@@ -345,12 +368,17 @@ function kickVisualOverride() {
     : currentEffect?.name === 'audio_kick_shockwave' ? 'shockwave' : null;
 }
 function kickOverlaysDisabled() {
-  return !kickVisualOverride() && currentEffect && getCfg(currentEffect.name).disableKick === true;
+  if (kickVisualOverride() || !currentEffect) return false;
+  const clip = currentEffect.name === 'media' ? shared.mediaLibrary.entries.find(item => item.id === currentState?.mediaId) : null;
+  return getCfg(currentEffect.name).disableKick === true || clip?.disableKick === true;
 }
 function audioKickAppearance() {
   const settings = audioInput.snapshot().settings;
   const visual = kickVisualOverride() || settings.kickVisual;
-  return { color: settings.kickColor, brightness: settings.kickBrightness, rainbow: settings.kickRainbow,
+  const effectConfig = currentEffect ? getCfg(currentEffect.name) : {};
+  const clip = currentEffect?.name === 'media' ? shared.mediaLibrary.entries.find(item => item.id === currentState?.mediaId) : null;
+  const overrideColor = clip?.forceKickColor ? clip.kickColor : effectConfig.forceKickColor ? effectConfig.kickColor : null;
+  return { color: overrideColor || settings.kickColor, brightness: settings.kickBrightness, rainbow: overrideColor ? false : settings.kickRainbow,
     visual, temporaryOverride: !!kickVisualOverride(),
     attackMs: settings.kickAttackMs, releaseMs: settings.kickReleaseMs,
     boostEnabled: settings.kickBoostEnabled, boostTarget: settings.kickBoostTarget,
@@ -367,6 +395,7 @@ function setKickAppearance(appearance) {
 function triggerAudioKick() {
   const now = Date.now() / 1000;
   if (blackout) return;
+  triggerEffectBrightness(now);
   const appearance = audioKickAppearance();
   setKickAppearance(appearance);
   if (appearance.boostEnabled || appearance.visual === 'brightness') {
@@ -393,7 +422,13 @@ if (savedAudio.kickUnified !== true && savedAudio.kickUsePanel !== false) {
   savedAudio.kickRainbow = config._kick?.rainbow === true;
 }
 savedAudio.kickUnified = true;
-const audioInput = createAudioInput(savedAudio, triggerAudioKick, { shouldTrigger: () => !!kickVisualOverride() });
+const audioInput = createAudioInput(savedAudio, () => {
+  if (audioInput.snapshot().settings.kickEnabled || kickVisualOverride()) triggerAudioKick();
+  else triggerEffectBrightness();
+}, {
+  shouldTrigger: () => !!kickVisualOverride() || effectBumpEnabled(),
+  kickSensitivity: () => kickVisualOverride() ? getCfg(currentEffect.name).kickSensitivity : 1,
+});
 shared.audio = audioInput;
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { audioInput.stop(); process.exit(0); });
 process.once('exit', () => audioInput.stop());
@@ -484,7 +519,7 @@ function playingScene() {
 }
 
 function effectAvailable(effect) {
-  return !effect.name.startsWith('audio_') || audioInput.snapshot().settings.enabled;
+  return !RETIRED_EFFECTS.has(effect.name) && (!effect.name.startsWith('audio_') || audioInput.snapshot().settings.enabled);
 }
 function enabledEffects() {
   return effectsList.filter(effect =>
@@ -509,6 +544,7 @@ function pickNextEffect() {
 
 function switchTo(effect, options) {
   if (!effect) return;
+  effectBrightnessEnvelope.clear();
   if (!effectAvailable(effect)) { effect = pickNextEffect(); options = undefined; }
   if (kickVisualOverride() || ['audio_kick_only', 'audio_kick_shockwave'].includes(effect.name)) {
     kickFlash = false; kickOverlay.clear(); flashEnvelope.clear(); boostEnvelope.clear();
@@ -625,7 +661,7 @@ setInterval(() => {
   // Blackout
   if (blackout) {
     kickOverlay.clear();
-    boostEnvelope.clear(); flashEnvelope.clear();
+    boostEnvelope.clear(); flashEnvelope.clear(); effectBrightnessEnvelope.clear();
     sendFrame(new Uint8Array(H * W * 3));
     return;
   }
@@ -663,9 +699,7 @@ setInterval(() => {
   }
 
   // Apply brightness (per-effect × global)
-  const activeBrightness = currentConfigOverrides && currentConfigOverrides.brightness !== undefined
-    ? currentConfigOverrides.brightness
-    : getCfg(currentEffect.name).brightness;
+  const activeBrightness = effectiveEffectBrightness(now);
   const liveBrightness = globalBrightness + Math.max(0, kickBoostTarget - globalBrightness) * boostEnvelope.value(now);
   const bright = activeBrightness * liveBrightness;
   pixelBuf = scaleOutput(pixelBuf, bright);
@@ -883,6 +917,11 @@ app.get('/admin/app.js', requireAdmin, (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path.join(PUBLIC_DIR, 'app.js'));
 });
+app.get('/halloween-gifs/:file', requireAdmin, (req, res) => {
+  if (!['pumpkin.gif', 'ghosts.gif', 'hands.gif', 'bat.gif', 'drip.gif', 'eyes.gif', 'spiders.gif', 'cauldron.gif'].includes(req.params.file)) return res.sendStatus(404);
+  res.sendFile(path.join(PUBLIC_DIR, 'halloween-gifs', req.params.file));
+});
+
 app.get('/admin/vendor/gifuct.js', requireAdmin, (req, res) => {
   res.setHeader('Cache-Control', 'public, max-age=86400');
   res.sendFile(path.join(PUBLIC_DIR, 'vendor', 'gifuct.js'));
@@ -1018,7 +1057,7 @@ function updateAudioSettings(patch, res) {
   if (JSON.stringify(next) !== JSON.stringify(previous)) {
     audioInput.configure(next);
     kickOverlay.clear();
-    boostEnvelope.clear(); flashEnvelope.clear();
+    boostEnvelope.clear(); flashEnvelope.clear(); effectBrightnessEnvelope.clear();
     kickFlash = false;
   }
   if (!next.enabled && currentEffect?.name.startsWith('audio_')) {
@@ -1057,6 +1096,7 @@ app.get('/api/state', (req, res) => {
     progress: Math.min(1, elapsed / dur),
     blackout,
     globalBrightness,
+    effectiveEffectBrightness: blackout ? 0 : effectiveEffectBrightness(Date.now() / 1000),
     effectiveBrightness: blackout ? 0 : globalBrightness + Math.max(0, kickBoostTarget - globalBrightness) * boostEnvelope.value(Date.now() / 1000),
     kickFlash,
     kickSettings: audioKickAppearance(),
@@ -1080,7 +1120,7 @@ app.get('/api/state', (req, res) => {
       djName: shared.djName,
       media: mediaMetadata(),
     },
-    effects: effectsList.map(e => ({
+    effects: effectsList.filter(e => !RETIRED_EFFECTS.has(e.name)).map(e => ({
       id:   e.name,
       name: e.name.replace(/_/g, ' '),
       ...getCfg(e.name),
@@ -1195,15 +1235,29 @@ app.post('/api/public-messages/next', (req, res) => {
 app.post('/api/effects/:id/config', (req, res) => {
   const id = req.params.id;
   if (!effectMap[id]) return res.status(404).json({ error: 'not found' });
-  const { duration, freq, brightness, enabled, color, rainbow, speed, reactivity, ball, disableKick } = req.body;
+  const { duration, freq, brightness, enabled, color, rainbow, speed, reactivity, ball, disableKick, kickSensitivity, forceKickColor, kickColor, kickBrightnessBump } = req.body;
+  if (kickBrightnessBump !== undefined && typeof kickBrightnessBump !== 'boolean') return res.status(400).json({ error: 'Option boost invalide.' });
+  if ((forceKickColor !== undefined && typeof forceKickColor !== 'boolean') || (kickColor !== undefined && (typeof kickColor !== 'string' || !/^#[a-f0-9]{6}$/i.test(kickColor)))) {
+    return res.status(400).json({ error: 'Couleur KICK invalide.' });
+  }
+  if (kickSensitivity !== undefined && (!['audio_kick_only', 'audio_kick_shockwave'].includes(id) || !Number.isFinite(kickSensitivity) || kickSensitivity < 0.5 || kickSensitivity > 8)) {
+    return res.status(400).json({ error: 'Sensibilité KICK invalide : ×0,5 à ×8 sur les visuels KICK uniquement.' });
+  }
   if (disableKick !== undefined && (typeof disableKick !== 'boolean' || ['audio_kick_only', 'audio_kick_shockwave'].includes(id))) {
     return res.status(400).json({ error: 'Option KICK invalide pour cet effet.' });
   }
   if (ball !== undefined && (id !== 'audio_spectrum' || typeof ball !== 'boolean')) return res.status(400).json({ error: 'Option balle invalide.' });
-  if (reactivity !== undefined && (!Number.isFinite(reactivity) || reactivity < 0.5 || reactivity > 8 || !['audio_scope', 'audio_spectrum', 'audio_mirror', 'audio_pumping_circle'].includes(id))) {
+  if (reactivity !== undefined && (!Number.isFinite(reactivity) || reactivity < 0.5 || reactivity > 8 || !['audio_scope', 'audio_spectrum', 'audio_mirror', 'audio_pumping_circle', ...require('./lib/halloween').NAMES.map(name => 'audio_' + name)].includes(id))) {
     return res.status(400).json({ error: 'La sensibilité visuelle doit être comprise entre ×0,5 et ×8.' });
   }
   const cfg = getCfg(id);
+  if (kickBrightnessBump !== undefined) {
+    cfg.kickBrightnessBump = kickBrightnessBump;
+    if (currentEffect?.name === id) effectBrightnessEnvelope.clear();
+  }
+  if (forceKickColor !== undefined) cfg.forceKickColor = forceKickColor;
+  if (kickColor !== undefined) cfg.kickColor = kickColor;
+  if (kickSensitivity !== undefined) cfg.kickSensitivity = kickSensitivity;
   if (disableKick !== undefined) cfg.disableKick = disableKick;
   if (ball !== undefined) cfg.ball = ball;
   if (reactivity !== undefined) cfg.reactivity = reactivity;
@@ -1224,6 +1278,7 @@ app.post('/api/effects/:id/play', (req, res) => {
   const id = req.params.id;
   const effect = effectMap[id];
   if (!effect) return res.status(404).json({ error: 'not found' });
+  if (RETIRED_EFFECTS.has(id)) return res.status(409).json({ error: 'Cet effet est mis de côté.' });
   if (!effectAvailable(effect)) return res.status(409).json({ error: 'Active l’audio pour lancer ce visuel.' });
   if (id === 'public_messages' && !messageStore.hasApproved()) {
     return res.status(409).json({ error: 'Aucun message validé dans la file.' });
@@ -1408,6 +1463,46 @@ app.post('/api/media', (req, res) => {
   });
 });
 
+app.post('/api/media/:id/weight', (req, res) => {
+  const clip = shared.mediaLibrary.entries.find(item => item.id === req.params.id);
+  if (!clip) return res.status(404).json({ error: 'Média introuvable.' });
+  if (!Number.isInteger(req.body.weight) || req.body.weight < 1 || req.body.weight > 10) return res.status(400).json({ error: 'Poids attendu : entier de 1 à 10.' });
+  const previous = clip.weight;
+  clip.weight = req.body.weight;
+  if (!saveMedia()) {
+    clip.weight = previous;
+    return res.status(500).json({ error: 'Impossible de sauvegarder le poids.' });
+  }
+  return res.json({ ok: true, library: mediaMetadata() });
+});
+
+app.post('/api/media/:id/kick-overlay', (req, res) => {
+  const clip = shared.mediaLibrary.entries.find(item => item.id === req.params.id);
+  if (!clip) return res.status(404).json({ error: 'Média introuvable.' });
+  if (typeof req.body.disableKick !== 'boolean') return res.status(400).json({ error: 'Option KICK invalide.' });
+  const previous = clip.disableKick;
+  clip.disableKick = req.body.disableKick;
+  if (!saveMedia()) {
+    clip.disableKick = previous;
+    return res.status(500).json({ error: 'Impossible de sauvegarder le réglage KICK.' });
+  }
+  return res.json({ ok: true, library: mediaMetadata() });
+});
+
+app.post('/api/media/:id/kick-color', (req, res) => {
+  const clip = shared.mediaLibrary.entries.find(item => item.id === req.params.id);
+  if (!clip) return res.status(404).json({ error: 'Média introuvable.' });
+  const { forceKickColor, kickColor } = req.body;
+  if (typeof forceKickColor !== 'boolean' || typeof kickColor !== 'string' || !/^#[a-f0-9]{6}$/i.test(kickColor)) return res.status(400).json({ error: 'Couleur KICK invalide.' });
+  const previous = { forceKickColor: clip.forceKickColor, kickColor: clip.kickColor };
+  Object.assign(clip, { forceKickColor, kickColor });
+  if (!saveMedia()) {
+    Object.assign(clip, previous);
+    return res.status(500).json({ error: 'Impossible de sauvegarder la couleur KICK.' });
+  }
+  return res.json({ ok: true, library: mediaMetadata() });
+});
+
 app.post('/api/media/:id/enabled', (req, res) => {
   const clip = shared.mediaLibrary.entries.find(item => item.id === req.params.id);
   if (!clip) return res.status(404).json({ error: 'Media introuvable.' });
@@ -1485,7 +1580,7 @@ app.post('/api/event', (req, res) => {
     if (body.on === false) {
       kickFlash = false;
       kickOverlay.clear();
-    boostEnvelope.clear(); flashEnvelope.clear();
+    boostEnvelope.clear(); flashEnvelope.clear(); effectBrightnessEnvelope.clear();
     } else {
       triggerAudioKick();
     }

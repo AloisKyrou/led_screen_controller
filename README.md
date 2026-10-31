@@ -1,4 +1,7 @@
-﻿# LED Screen Controller
+# LED Screen Controller
+
+See [DEPLOY_RPI.md](DEPLOY_RPI.md) for source transfer over the Pi Wi-Fi, and
+[CONTEXT_HANDOFF.md](CONTEXT_HANDOFF.md) to resume development on another computer.
 
 Node.js ArtNet server + browser VJ interface for a 60×15 WS2812B LED panel. Effects, live text, image/GIF upload, scene cues, kick flash, and per-effect controls — controlled from a phone over the local network.
 
@@ -441,6 +444,98 @@ netsh advfirewall firewall add rule name="Panel Controller" dir=in action=allow 
   à tester avec le microphone et la musique sur place.
 
 ### Enveloppe et boost de luminosité au kick
+
+Chaque effet dispose de **Booster Bright au kick**, désactivé par défaut.
+Le paramètre Bright de cet effet devient sa luminosité de repos : au kick,
+il monte temporairement à 100 % puis revient au repos avec l’attaque et la
+descente KICK configurées. Le réglage enregistré n’est pas modifié et la
+luminosité globale reste appliquée séparément. À Bright 100 %, le boost local
+n’a pas de marge supplémentaire. Il fonctionne avec le bouton manuel et les
+kicks détectés (capture activée), même si Audio → KICK ou les surcouches sont
+désactivés. Cela n’active pas de flash/choc supplémentaire. Le boost global
+peut toujours se combiner avec ce boost local. L’enveloppe locale est réinitialisée
+en changeant d’effet, en coupant l’audio ou en blackout.
+
+### Halloween : visuels et GIF
+
+`nol_chaos` fait circuler des lettres N/O/O/L/S. À intervalles irréguliers,
+cinq lettres convergent vers un mot **NOOLS**, se redressent puis restent
+immobiles en scintillant pendant 1,5 seconde avant de se disperser. Le premier
+rendez-vous arrive après 4–7 secondes, puis 4–9 secondes de chaos séparent
+les séquences (au réglage Speed 30). La position du mot varie, mais reste
+entièrement dans le panneau. Les couleurs fixes et arc-en-ciel restent respectées.
+
+Le pack comporte les visuels suivants, désactivés en AUTO par défaut ;
+chaudron, bouche et yeux sont désormais mis de côté (code conservé) :
+`audio_pumpkin_groove` (trois grandes citrouilles dessinées en pixels natifs,
+tiges vertes, côtes et visages triangulaires, avec léger mouvement sonore),
+`audio_pumpkin_jump` (zoom sur la frappe), `audio_watching_eyes` (yeux qui
+s’ouvrent), `audio_elastic_ghosts` (trois fantômes étirés par grave/médium/aigu),
+`audio_spiders` (fils et araignées), `audio_bat_swarm` (envol),
+`audio_cauldron` (liquide, bulles et éclaboussures), `audio_monster_mouth`
+(ouverture sonore, fermeture au kick) et `audio_skeleton` (crâne et mains).
+Le squelette utilise une tête centrée sur toute la hauteur, agrandie
+proportionnellement (environ 17×15), avec les yeux conservés à 2×2 pixels et
+les mains de chaque côté. La citrouille Sursaut
+reste visible à taille normale et tourne continuellement sans kick ; les kicks
+modifient uniquement son zoom, puis elle revient à sa taille normale.
+Chaque visuel a son curseur de sensibilité.
+
+Ces dessins suivent le spectre et le compteur de détection : ils réagissent aux
+kicks même si Audio → KICK est décoché. Les surcouches génériques sont désactivées
+par défaut sur ces effets pour préserver les silhouettes ; le boost reste possible.
+Audio désactivé les exclut de la lecture comme les autres effets `audio_*`.
+
+Dans la console, le volet **Halloween — 8 GIF 60×15 à télécharger** fournit
+citrouilles, fantômes NOOL, mains de squelette, chauve-souris NOOL et potion/NOOL
+dégoulinant, ainsi que des boucles d’ambiance yeux, araignées et chaudron.
+La boucle citrouilles utilise le même dessin lisible que Groove, avec clignements
+et extinction. Importer les fichiers dans la bibliothèque de médias pour les jouer
+sans audio et choisir leur case AUTO. Les fichiers se trouvent dans
+`public/halloween-gifs/`, respectent les limites de l’éditeur public et ne
+remplacent aucune donnée du Pi. Rendu procédural partagé : `lib/halloween.js`.
+
+La section **Scène / Cues** est repliée par défaut. Le bouton **Afficher / Masquer**
+mémorise son état dans ce navigateur ; masquer l’éditeur n’arrête pas la lecture.
+`fete_trouble`, `moving_tile_puzzle`, `fillscreen_snakewise` et `bouncing_balls`
+sont mis de côté via `RETIRED_EFFECTS` dans `server.js`. Leur code et leurs
+réglages sont conservés ; ils sont absents de l’interface, exclus d’AUTO et
+ignorés dans les scènes. Retirer un identifiant de cet ensemble permet de le
+réintégrer plus tard.
+
+Le mode **Seuil adaptatif** propose une sensibilité de ×0,5 à ×4 (×1 par défaut).
+Une valeur plus élevée réduit le seuil calculé et accepte des attaques plus
+faibles, sans abaisser le seuil de bruit. Ce facteur est sauvegardé dans
+`audio.json` et se multiplie par celui du visuel Kick flash / Kick choc lorsqu’il
+est actif. Le multiplicateur manuel reste inchangé et le curseur adaptatif
+n’a aucun effet lorsque le mode adaptatif est désactivé.
+
+**Forcer la couleur KICK** est disponible sur chaque carte d’effet et chaque
+média enregistré, avec un sélecteur de couleur. Priorité : couleur forcée du
+GIF en lecture → couleur forcée de l’effet → réglage KICK général (fixe ou
+aléatoire). Ce choix s’applique au bouton manuel et à la détection audio, pour
+flash et onde de choc, sans modifier le boost de luminosité. Décocher rétablit
+l’héritage et conserve la couleur choisie. Une couleur forcée ne réactive pas
+des surcouches désactivées. Les réglages sont enregistrés dans `effects.json`
+et `media.json`, et restent valables en AUTO comme en lecture manuelle.
+
+Chaque GIF dispose aussi de **Désactiver les surcouches KICK** : flash et onde
+sont bloqués, mais le boost de luminosité reste autorisé. Une désactivation sur
+l’effet media s’applique toujours à l’ensemble de ses GIF, même si leur case est
+décochée. Les réglages individuels sont conservés dans `media.json`.
+
+Le tirage AUTO se fait à deux niveaux : **Poids catégorie** sur media va de
+1 à 100 pour peser face aux autres effets ; puis **Poids AUTO du GIF** va de
+1 à 10 parmi les médias cochés AUTO. Les anciens GIF ont un poids de 1.
+Exemple : deux GIF de poids 1 et 4 ont 20 % / 80 % des passages media.
+Ces poids n’affectent ni la durée ni les lectures explicites/manuelles/scènes.
+
+Les cartes **Kick flash** et **Kick choc** ont chacune une **Sensibilité KICK**
+de ×0,5 à ×8, par défaut ×2, sauvegardée indépendamment dans `effects.json`.
+Pendant ce visuel, ce facteur divise le seuil de détection et le critère
+d’attaque relatif ; il fonctionne avec le seuil manuel ou adaptatif. Le seuil
+de bruit, le réarmement et le délai minimum restent respectés. En quittant le
+visuel, le facteur revient à ×1 sans modifier les réglages audio enregistrés.
 
 La luminosité par effet × globale est appliquée à une copie du rendu, jamais au
 tableau interne conservé par un effet. Les pixels persistants (`fading_pixel`,

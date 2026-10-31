@@ -1,5 +1,8 @@
 # Déploiement sur le Raspberry Pi
 
+See [DEPLOY_RPI.md](DEPLOY_RPI.md) for source transfer over the Pi Wi-Fi, and
+[CONTEXT_HANDOFF.md](CONTEXT_HANDOFF.md) to resume development on another computer.
+
 La méthode par défaut, validée par l'utilisateur le 30 octobre 2026, est le
 transfert des développements locaux par SCP/SSH via le Wi-Fi du Pi. Ne pas
 chercher à connecter le Pi à Internet pour une mise à jour ordinaire.

@@ -1,6 +1,31 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+test('chaos letters gather into a stationary sparkling NOOLS then disperse', t => {
+  t.mock.method(Math, 'random', () => 0.5);
+  const effect = require('../effects/nol_chaos');
+  const state = effect.init(60, 15);
+  state.nextFormation = 0;
+  const config = { speed: 30, rainbow: false, color: '#ff0000' };
+  const frame = () => effect.frame(state, state.clock, 0.1, config);
+  frame();
+  assert.equal(state.formation.letters.map(s => s.text).join(''), 'NOOLS');
+  for (let i = 0; i < 12; i++) frame();
+  const first = frame(), second = frame();
+  const mask = pixels => Array.from(pixels, v => v > 0);
+  assert.deepEqual(mask(first), mask(second), 'word does not move while sparkling');
+  assert.notDeepEqual(first, second, 'brightness scintillates');
+  const { GLYPHS } = require('../effects/font');
+  const expected = new Uint8Array(60 * 15 * 3);
+  for (const letter of state.formation.letters) for (let x = 0; x < 5; x++) for (let y = 0; y < 7; y++) {
+    if (GLYPHS[letter.text][x] & (1 << y)) expected[((letter.ty + y - 3) * 60 + letter.tx + x - 2) * 3] = 1;
+  }
+  assert.deepEqual(mask(first), mask(expected), 'the complete NOOLS is readable');
+  for (let i = 0; i < 20; i++) frame();
+  assert.equal(state.formation, null);
+  assert.ok(state.nextFormation > state.clock + 3);
+  assert.ok(state.sprites.length >= 5);
+});
 for (const name of ['pharmacy_tunnel', 'nool_scatter', 'nol_chaos']) {
   const effect = require('../effects/' + name);
   test(name + ' animates bounded frames and honours fixed colour', () => {

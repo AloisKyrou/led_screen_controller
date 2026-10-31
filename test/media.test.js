@@ -8,6 +8,20 @@ function encoded(values) {
   return Buffer.from(values).toString('base64');
 }
 
+test('media AUTO uses relative weights and ignores disabled entries', t => {
+  const shared = { mediaLibrary: { entries: [
+    { id: 'a', weight: 1, frames: [encoded([1,0,0])] },
+    { id: 'b', weight: 4, frames: [encoded([0,1,0])] },
+    { id: 'off', weight: 10, enabled: false, frames: [encoded([0,0,1])] },
+  ] } };
+  let draw = 0;
+  t.mock.method(Math, 'random', () => draw);
+  const counts = { a: 0, b: 0 };
+  for (let i = 0; i < 100; i++) { draw = (i + 0.5) / 100; counts[media.init(1, 1, {}, shared).mediaId]++; }
+  assert.deepEqual(counts, { a: 20, b: 80 });
+  assert.equal(media.init(1, 1, {}, shared, { mediaId: 'a' }).mediaId, 'a');
+});
+
 test('AUTO excludes unselected media but explicit playback still works', () => {
   const shared = { mediaLibrary: { entries: [
     { id: 'off', enabled: false, version: 1, frames: [encoded([255, 0, 0])] },
@@ -29,6 +43,9 @@ test('media selection is validated, authenticated and survives restart', { timeo
     await server.login();
     const created = await (await server.request('/api/media', { name: 'selection', frames: [encoded(new Array(2700).fill(10))], durations: [100] }, true)).json();
     const id = created.media.id;
+    assert.equal((await server.request(`/api/media/${id}/weight`, { weight: 0 }, true)).status, 400);
+    assert.equal((await server.request(`/api/media/${id}/weight`, { weight: 4 }, true)).status, 200);
+    await server.request('/api/effects/media/config', { freq: 100 }, true);
     assert.equal(created.media.enabled, true);
     assert.equal((await server.request(`/api/media/${id}/enabled`, { enabled: 'false' }, true)).status, 400);
     const off = await (await server.request(`/api/media/${id}/enabled`, { enabled: false }, true)).json();
@@ -36,6 +53,8 @@ test('media selection is validated, authenticated and survives restart', { timeo
     const directory = server.directory;
     await server.stop(false); server = await startServer(directory); await server.login();
     const state = await (await server.request('/api/state', undefined, true)).json();
+    assert.equal(state.shared.media.find(item => item.id === id).weight, 4);
+    assert.equal(state.effects.find(item => item.id === 'media').freq, 100);
     assert.equal(state.shared.media.find(item => item.id === id).enabled, false);
     assert.equal((await server.request(`/api/media/${id}/play`, {}, true)).status, 200);
     const on = await (await server.request(`/api/media/${id}/enabled`, { enabled: true }, true)).json();

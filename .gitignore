@@ -5,3 +5,7 @@ messages.json.tmp
 public-gifs/
 audio.json
 audio.json.tmp
+
+# Local QR codes contain Wi-Fi credentials.
+assets/qr-codes/NOOLS-CONNEXION-WIFI-PORTAIL.png
+assets/qr-codes/NOOLS-CONNEXION-WIFI-PORTAIL.svg

@@ -23,7 +23,10 @@ function findClip(shared, mediaId) {
   if (!Array.isArray(entries) || !entries.length) return null;
   if (mediaId) return entries.find(clip => clip.id === mediaId) || null;
   const eligible = entries.filter(clip => clip.enabled !== false);
-  return eligible[Math.floor(Math.random() * eligible.length)] || null;
+  const weight = clip => Number.isFinite(clip.weight) ? Math.max(1, Math.min(10, clip.weight)) : 1;
+  let pick = Math.random() * eligible.reduce((sum, clip) => sum + weight(clip), 0);
+  for (const clip of eligible) { pick -= weight(clip); if (pick < 0) return clip; }
+  return eligible[eligible.length - 1] || null;
 }
 
 function init(W, H, config, shared, options) {

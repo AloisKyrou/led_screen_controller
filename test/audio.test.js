@@ -79,6 +79,37 @@ test('adaptive threshold follows changing bass levels and rejects steady sound',
   assert.ok(beats <= 1);
 });
 
+test('visual kick sensitivity lowers manual and adaptive thresholds without lowering noise gate', () => {
+  for (const adaptive of [false, true]) {
+    const analyze = createAnalyzer();
+    const settings = { ...defaults, kickAdaptive: adaptive };
+    for (let i = 0; i < 100; i++) analyze(tone(80, 0.3, i * 512), settings, i * 32);
+    const normal = analyze(tone(80), settings, 3200, 1).detection;
+    const boosted = analyze(tone(80), settings, 3232, 2).detection;
+    assert.equal(boosted.sensitivityMultiplier, 2);
+    assert.ok(boosted.threshold < normal.threshold * 0.55);
+    const silence = analyze(new Float64Array(SIZE), settings, 3264, 8);
+    assert.ok(silence.detection.threshold >= settings.noiseGate);
+    assert.equal(silence.beat, false);
+    assert.equal(settings.sensitivity, defaults.sensitivity);
+  }
+});
+
+test('adaptive sensitivity fader adjusts only adaptive mode and combines with visual gain', () => {
+  const read = (adaptive, factor, visual) => {
+    const analyze = createAnalyzer();
+    const settings = { ...defaults, kickAdaptive: adaptive, kickAdaptiveSensitivity: factor };
+    let result;
+    for (let i = 0; i < 100; i++) result = analyze(tone(80, 0.3, i * 512), settings, i * 32, visual);
+    return result.detection;
+  };
+  assert.equal(read(false, 4, 1).threshold, read(false, 1, 1).threshold);
+  assert.ok(Math.abs(read(true, 2, 1).threshold * 2 - read(true, 1, 1).threshold) < 1e-9);
+  assert.equal(read(true, 2, 2).sensitivityMultiplier, 4);
+  assert.throws(() => validateSettings({ kickAdaptiveSensitivity: 0 }));
+  assert.throws(() => validateSettings({ kickAdaptiveSensitivity: 5 }));
+});
+
 test('capture handles fragmented PCM, disconnects, shutdown and invalid settings', () => {
   let child;
   const input = createAudioInput({ ...defaults, enabled: true }, () => {}, { spawn(command, args, options) {

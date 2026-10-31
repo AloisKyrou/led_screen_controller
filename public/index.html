@@ -134,7 +134,9 @@
   .media-status { min-height: 20px; margin-top: 8px; color: #888; font-size: 12px; }
   .media-status.error { color: #f66; }
   .media-library { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-  .media-entry { display: grid; grid-template-columns: minmax(100px, 1fr) auto auto auto; gap: 7px; align-items: center; background: #101010; border: 1px solid #292929; border-radius: 7px; padding: 8px; }
+  .media-entry { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; background: #101010; border: 1px solid #292929; border-radius: 7px; padding: 8px; }
+  .media-entry-name { flex: 1 1 160px; min-width: 0; }
+  .media-kick-controls { flex-basis: 100%; order: 1; flex-wrap: wrap; }
   .media-entry-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
   .media-entry-meta { color: #666; font-size: 11px; white-space: nowrap; }
 
@@ -211,6 +213,8 @@
   #audioSettings label { display: inline-flex; gap: 7px; align-items: center; flex-wrap: wrap; color: #ccc; font-size: 13px; }
   #audioSettings input:not([type=checkbox]), #audioSettings select { padding: 7px; border: 1px solid #444; border-radius: 6px; background: #0b0b0b; color: #eee; max-width: 100%; }
   #audioSettings input[type=checkbox] { accent-color: #f90; }
+  #audioSettings input:disabled, #audioSettings select:disabled { opacity: 0.4; cursor: not-allowed; }
+  #audioSettings label:has(#audioSensitivity:disabled) { color: #777; }
   #audioSettings [hidden] { display: none !important; }
   #audioStatus, #audioSaveStatus { font-size: 13px; margin: 10px 0 0; color: #ccc; overflow-wrap: anywhere; }
   .audio-detection { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
@@ -269,8 +273,9 @@
       </div>
       <div class="public-gif-actions">
         <label>Gain <input id="audioGain" type="number" min="0.1" max="20" step="0.1" value="2" style="width:65px"></label>
-        <label>Seuil de bruit <input id="audioGate" type="number" min="0.001" max="0.2" step="0.001" value="0.008" style="width:80px"></label>
+        <label>Seuil de bruit <input id="audioGate" aria-describedby="audioGateHelp" type="number" min="0.001" max="0.2" step="0.001" value="0.008" style="width:80px"></label>
       </div>
+      <p id="audioGateHelp" class="public-gif-note">Seuil de bruit : niveau sonore minimum après le gain. Plus haut = ignore davantage les petits bruits, mais peut perdre des sons faibles. Plus bas = réagit plus facilement, y compris au souffle. Il reste actif en mode adaptatif et fixe aussi un minimum pour les basses. Ce n’est pas un volume de sortie ni une valeur en décibels. Ajuste-le juste au-dessus du bruit ambiant, puis clique sur Appliquer.</p>
       <p class="public-gif-note">Le microphone alimente deux usages indépendants : les visuels audio continus et les surcouches déclenchées par les kicks.</p>
       <div class="audio-detection">
         <span id="audioBeatLamp">KICK DÉTECTÉ</span>
@@ -291,12 +296,14 @@
         <p class="public-gif-note">« Boost luminosité seul » éclaire le visuel courant, sans flash ni onde. Pour un flash ou une onde, « Booster aussi » ajoute ce même éclaircissement du fond : les boosts ne se cumulent pas. En mode boost seul, la couleur et l’opacité de surcouche ne sont pas utilisées.</p>
         <p class="public-gif-note">Le boost monte depuis la luminosité globale vers la cible puis redescend, sans modifier le réglage global. Attaque et descente s’appliquent aussi au flash ; sa durée ci-dessous est le maintien au sommet. L’onde conserve sa durée de propagation. Un nouveau kick repart du niveau atteint.</p>
         <div class="public-gif-actions">
-          <label>Seuil du kick <input id="audioSensitivity" type="number" min="0.5" max="4" step="0.1" value="1.8" style="width:65px"></label>
+          <label>Seuil KICK manuel <input id="audioSensitivity" aria-describedby="manualKickHelp" type="number" min="0.5" max="4" step="0.1" value="1.8" style="width:65px"></label>
           <label><input id="audioKickAdaptive" type="checkbox"> Seuil adaptatif</label>
+          <label id="adaptiveSensitivityLabel" hidden>Sensibilité adaptative <input id="audioKickAdaptiveSensitivity" type="range" min="0.5" max="4" step="0.1" value="1" oninput="document.getElementById('adaptiveSensitivityValue').textContent='×'+this.value"> <span id="adaptiveSensitivityValue">×1</span></label>
           <label>Délai minimum (ms) <input id="audioKickInterval" type="number" min="80" max="500" step="10" value="160" style="width:70px"></label>
           <label><input id="audioKick" type="checkbox"> Audio → KICK</label>
         </div>
-        <p class="public-gif-note">Seuil adaptatif : suit le niveau et les variations des basses sur environ 2 secondes. Remplace le multiplicateur manuel, tout en gardant le seuil de bruit et le délai minimum. Les visuels Kick flash et Kick choc activent temporairement le déclenchement audio ; la capture audio doit être activée.</p>
+        <p id="manualKickHelp" class="public-gif-note">Seuil KICK manuel : plus haut = détection plus stricte.</p>
+        <p class="public-gif-note">Seuil adaptatif : suit le niveau et les variations des basses sur environ 2 secondes. Remplace le multiplicateur manuel, tout en gardant le seuil de bruit et le délai minimum. Sensibilité adaptative : plus haut = davantage de kicks détectés. Les visuels Kick flash et Kick choc activent temporairement le déclenchement audio ; la capture audio doit être activée.</p>
         <div class="public-gif-actions">
           <label>Opacité de la surcouche <input id="audioKickOpacity" type="range" min="0" max="100" value="100" oninput="document.getElementById('audioKickOpacityValue').textContent=this.value+' %'"> <span id="audioKickOpacityValue">100 %</span></label>
         </div>
@@ -324,6 +331,18 @@
       <p id="audioSaveStatus" role="status"></p>
     </form>
     <h3>Visuels audio réactifs</h3>
+    <details class="public-gif-note">
+      <summary>Halloween — 8 GIF 60×15 à télécharger</summary>
+      <p>À importer dans la bibliothèque de médias pour choisir leur participation en AUTO.</p>
+      <a href="/halloween-gifs/pumpkin.gif" download>Citrouilles</a> ·
+      <a href="/halloween-gifs/ghosts.gif" download>Fantômes NOOL</a> ·
+      <a href="/halloween-gifs/hands.gif" download>Mains de squelette</a> ·
+      <a href="/halloween-gifs/bat.gif" download>Chauve-souris NOOL</a> ·
+      <a href="/halloween-gifs/drip.gif" download>NOOL dégoulinant</a> ·
+      <a href="/halloween-gifs/eyes.gif" download>Yeux dans le noir</a> ·
+      <a href="/halloween-gifs/spiders.gif" download>Araignées</a> ·
+      <a href="/halloween-gifs/cauldron.gif" download>Chaudron</a>
+    </details>
     <p class="public-gif-note">Sensibilité : ×1 = niveau normal, ×2 à ×4 amplifie les petits mouvements. Chaque visuel a son réglage ; les kicks ne sont pas modifiés.</p>
     <p class="public-gif-note">Ces visuels remplacent le fond courant quand tu les lances. Active-les pour les inclure dans la rotation AUTO. Les surcouches au kick fonctionnent par-dessus ces visuels comme sur les autres effets.</p>
     <div class="effect-list" id="audioEffectList"></div>
@@ -384,6 +403,7 @@
 
   <section>
     <h2>Image / GIF</h2>
+    <p class="public-gif-note">AUTO : le poids de la catégorie media (1–100) règle sa fréquence parmi les effets. Le poids de chaque GIF (1–10) règle ensuite sa fréquence parmi les médias cochés AUTO. Ce sont des poids relatifs, pas des pourcentages ; ils ne changent pas la durée de lecture.</p>
     <div class="media-card">
       <div class="media-controls">
         <input class="media-file" id="mediaFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
@@ -404,8 +424,8 @@
   </section>
 
   <section>
-    <h2>Scène / Cues</h2>
-    <div class="scene-card">
+    <h2>Scène / Cues <button id="sceneVisibility" type="button" class="btn btn-dark" aria-controls="scenePanel" aria-expanded="false">Afficher</button></h2>
+    <div class="scene-card" id="scenePanel" hidden>
       <div class="scene-library">
         <select class="scene-select" id="sceneSelect" aria-label="Scène à éditer et à jouer"></select>
         <button class="btn btn-dark scene-library-btn" id="sceneCreateBtn" type="button" title="Créer une scène">+</button>

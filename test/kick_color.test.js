@@ -1,0 +1,45 @@
+'use strict';
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { startServer } = require('../test-support/server');
+test('GIF kick colour overrides effect colour, then falls back to shared settings, and persists', { timeout: 30000 }, async () => {
+  let server = await startServer();
+  const appearance = async () => (await (await server.request('/api/audio/state', undefined, true)).json()).kickAppearance;
+  try {
+    assert.equal((await server.request('/api/media/missing/kick-color', { forceKickColor: true, kickColor: '#ff0000' })).status, 401);
+    await server.login();
+    await server.request('/api/audio/settings', { kickColor: '#ffffff', kickRainbow: true, kickVisual: 'flash' }, true);
+    assert.equal((await server.request('/api/effects/media/config', { forceKickColor: 'yes' }, true)).status, 400);
+    await server.request('/api/effects/media/config', { forceKickColor: true, kickColor: '#00ff00' }, true);
+    const created = await (await server.request('/api/media', { name: 'Colour test', frames: [Buffer.alloc(2700, 30).toString('base64')], durations: [100] }, true)).json();
+    const id = created.media.id;
+    assert.equal((await appearance()).color, '#00ff00');
+    assert.equal((await appearance()).rainbow, false);
+    assert.equal((await server.request(`/api/media/${id}/kick-color`, { forceKickColor: true, kickColor: 'bad' }, true)).status, 400);
+    await server.request(`/api/media/${id}/kick-color`, { forceKickColor: true, kickColor: '#ff0088' }, true);
+    await server.request('/api/event', { type: 'kick' }, true);
+    assert.equal((await (await server.request('/api/state', undefined, true)).json()).kickFlashColor, '#ff0088');
+    await server.request('/api/audio/settings', { kickVisual: 'shockwave' }, true);
+    assert.equal((await appearance()).color, '#ff0088');
+    assert.equal((await server.request(`/api/media/${id}/kick-overlay`, { disableKick: 'true' }, true)).status, 400);
+    await server.request(`/api/media/${id}/kick-overlay`, { disableKick: true }, true);
+    await server.request('/api/brightness', { value: 0.7 }, true);
+    await server.request('/api/audio/settings', { kickVisual: 'flash', kickBoostEnabled: true, kickReleaseMs: 1000 }, true);
+    await server.request('/api/event', { type: 'kick' }, true);
+    const blocked = await (await server.request('/api/state', undefined, true)).json();
+    assert.equal(blocked.kickFlash, false);
+    assert.ok(blocked.effectiveBrightness > 0.9);
+    const directory = server.directory;
+    await server.stop(false); server = await startServer(directory); await server.login();
+    await server.request(`/api/media/${id}/play`, {}, true);
+    const restored = await (await server.request('/api/state', undefined, true)).json();
+    assert.equal(restored.shared.media.find(item => item.id === id).disableKick, true);
+    assert.equal((await appearance()).color, '#ff0088');
+    await server.request(`/api/media/${id}/kick-color`, { forceKickColor: false, kickColor: '#ff0088' }, true);
+    assert.equal((await appearance()).color, '#00ff00');
+    await server.request('/api/effects/media/config', { forceKickColor: false }, true);
+    assert.equal((await appearance()).rainbow, true);
+    await server.request('/api/effects/pumping_circle/play', {}, true);
+    assert.equal((await appearance()).rainbow, true);
+  } finally { await server.stop(); }
+});
